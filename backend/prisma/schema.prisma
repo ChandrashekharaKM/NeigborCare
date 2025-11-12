@@ -1,0 +1,116 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                    String      @id @default(cuid())
+  phone_number          String      @unique
+  name                  String
+  email                 String?     @unique
+  profile_picture       String?
+  is_responder          Boolean     @default(false)
+  created_at            DateTime    @default(now())
+  updated_at            DateTime    @updatedAt
+
+  // Responder specific fields
+  is_certified          Boolean?    @default(false)
+  is_available          Boolean?    @default(false)
+  certification_type    String?
+  certification_uploaded_at DateTime?
+  latitude              Float?
+  longitude             Float?
+  successful_responses  Int         @default(0)
+  emergency_alerts_received Int    @default(0)
+  total_lives_helped    Int         @default(0)
+
+  // Relations
+  created_emergencies   Emergency[] @relation("UserEmergencies")
+  responded_emergencies Emergency[] @relation("ResponderEmergencies")
+
+  @@index([phone_number])
+  @@index([is_responder])
+  @@index([is_available])
+}
+
+model Emergency {
+  id                String    @id @default(cuid())
+  user_id           String
+  user              User      @relation("UserEmergencies", fields: [user_id], references: [id])
+  responder_id      String?
+  responder         User?     @relation("ResponderEmergencies", fields: [responder_id], references: [id])
+  
+  latitude          Float
+  longitude         Float
+  emergency_type    String    // 'Cardiac', 'Bleeding', 'Choking', 'Fracture', 'Other'
+  status            String    @default("pending") // 'pending', 'in-progress', 'resolved'
+  description       String?
+  
+  created_at        DateTime  @default(now())
+  resolved_at       DateTime?
+  updated_at        DateTime  @updatedAt
+
+  // Relations
+  alerts            EmergencyAlert[]
+  updates           LocationUpdate[]
+
+  @@index([user_id])
+  @@index([responder_id])
+  @@index([status])
+  @@index([created_at])
+}
+
+model EmergencyAlert {
+  id                String    @id @default(cuid())
+  emergency_id      String
+  emergency         Emergency @relation(fields: [emergency_id], references: [id], onDelete: Cascade)
+  responder_id      String
+  
+  distance          Int       // Distance in meters
+  status            String    @default("pending") // 'pending', 'accepted', 'declined'
+  sent_at           DateTime  @default(now())
+  responded_at      DateTime?
+
+  @@index([emergency_id])
+  @@index([responder_id])
+  @@index([status])
+}
+
+model LocationUpdate {
+  id                String    @id @default(cuid())
+  emergency_id      String
+  emergency         Emergency @relation(fields: [emergency_id], references: [id], onDelete: Cascade)
+  
+  user_id           String
+  latitude          Float
+  longitude         Float
+  timestamp         DateTime
+
+  @@index([emergency_id])
+  @@index([user_id])
+  @@index([timestamp])
+}
+
+model Resource {
+  id                String    @id @default(cuid())
+  name              String
+  type              String    // 'hospital', 'pharmacy', 'clinic', etc.
+  latitude          Float
+  longitude         Float
+  phone             String?
+  address           String?
+  is_24_hours       Boolean   @default(false)
+  
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  @@index([type])
+  @@index([latitude, longitude])
+}
