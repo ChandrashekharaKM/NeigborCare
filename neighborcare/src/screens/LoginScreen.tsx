@@ -19,23 +19,62 @@ interface LoginScreenProps {
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   const [phone, setPhone] = useState('');
+  const [otp, setOtp] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [sendingOtp, setSendingOtp] = useState(false);
   const { authContext } = useAuth();
 
-  const handleLogin = async () => {
+  const handleRequestOTP = async () => {
     if (!phone.trim()) {
       Alert.alert('Error', 'Please enter your phone number');
       return;
     }
 
+    // Basic phone validation
+    if (phone.length < 10) {
+      Alert.alert('Error', 'Please enter a valid phone number');
+      return;
+    }
+
+    setSendingOtp(true);
+    try {
+      await authContext.requestOTP(phone);
+      setOtpSent(true);
+      Alert.alert('Success', 'OTP has been sent to your phone number');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to send OTP');
+    } finally {
+      setSendingOtp(false);
+    }
+  };
+
+  const handleLogin = async () => {
+    if (!phone.trim() || !otp.trim()) {
+      Alert.alert('Error', 'Please enter phone number and OTP');
+      return;
+    }
+
+    if (otp.length !== 6) {
+      Alert.alert('Error', 'OTP must be 6 digits');
+      return;
+    }
+
     setLoading(true);
     try {
-      await authContext.signIn(phone);
+      await authContext.signIn(phone, otp);
     } catch (error: any) {
       Alert.alert('Login Failed', error.message || 'Failed to login');
+      // Reset OTP on failure
+      setOtp('');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleChangePhone = () => {
+    setOtpSent(false);
+    setOtp('');
   };
 
   return (
@@ -48,29 +87,75 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
 
         <View style={styles.formContainer}>
           <Text style={styles.title}>Welcome Back</Text>
-          <Text style={styles.subtitle}>Sign in with your phone number</Text>
+          <Text style={styles.subtitle}>Sign in with your phone number and OTP</Text>
 
-          <TextInput
-            style={styles.input}
-            placeholder="Enter phone number"
-            placeholderTextColor="#999"
-            keyboardType="phone-pad"
-            value={phone}
-            onChangeText={setPhone}
-            editable={!loading}
-          />
+          <View>
+            <Text style={styles.label}>Phone Number</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter phone number"
+              placeholderTextColor="#999"
+              keyboardType="phone-pad"
+              value={phone}
+              onChangeText={setPhone}
+              editable={!otpSent && !loading}
+            />
+          </View>
 
-          <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleLogin}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Sign In</Text>
-            )}
-          </TouchableOpacity>
+          {!otpSent ? (
+            <TouchableOpacity
+              style={[styles.button, sendingOtp && styles.buttonDisabled]}
+              onPress={handleRequestOTP}
+              disabled={sendingOtp}
+            >
+              {sendingOtp ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.buttonText}>Send OTP</Text>
+              )}
+            </TouchableOpacity>
+          ) : (
+            <>
+              <View>
+                <Text style={styles.label}>Enter OTP</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter 6-digit OTP"
+                  placeholderTextColor="#999"
+                  keyboardType="number-pad"
+                  value={otp}
+                  onChangeText={setOtp}
+                  maxLength={6}
+                  editable={!loading}
+                />
+                <TouchableOpacity onPress={handleChangePhone} style={styles.resendContainer}>
+                  <Text style={styles.resendText}>Change phone number</Text>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.button, loading && styles.buttonDisabled]}
+                onPress={handleLogin}
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.buttonText}>Verify & Sign In</Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleRequestOTP}
+                disabled={sendingOtp}
+                style={styles.resendOtpButton}
+              >
+                <Text style={styles.resendOtpText}>
+                  {sendingOtp ? 'Sending...' : "Didn't receive OTP? Resend"}
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
 
           <View style={styles.divider}>
             <View style={styles.line} />
@@ -147,6 +232,12 @@ const styles = StyleSheet.create({
     color: '#999',
     marginBottom: 20,
   },
+  label: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
   input: {
     borderWidth: 1,
     borderColor: '#ddd',
@@ -156,6 +247,25 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     fontSize: 16,
     color: '#333',
+  },
+  resendContainer: {
+    marginTop: -10,
+    marginBottom: 10,
+    alignItems: 'flex-end',
+  },
+  resendText: {
+    color: '#e74c3c',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  resendOtpButton: {
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  resendOtpText: {
+    color: '#e74c3c',
+    fontSize: 14,
+    fontWeight: '500',
   },
   button: {
     backgroundColor: '#e74c3c',

@@ -50,14 +50,15 @@ function authReducer(state: AuthState, action: AuthAction): AuthState {
 export const AuthContext = createContext<{
   state: AuthState;
   authContext: {
-    register: (phone: string, name: string) => Promise<void>;
-    signIn: (phone: string) => Promise<void>;
+    requestOTP: (phone: string) => Promise<void>;
+    register: (name: string, email: string, phone: string, password: string, userType: 'user' | 'responder') => Promise<void>;
+    signIn: (phone: string, otp: string) => Promise<void>;
     signOut: () => Promise<void>;
-    signUp?: (phone: string, name: string) => Promise<void>;
   };
 }>({
   state: initialState,
   authContext: {
+    requestOTP: async () => {},
     register: async () => {},
     signIn: async () => {},
     signOut: async () => {},
@@ -89,9 +90,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const authContext = {
-    register: useCallback(async (phone: string, name: string) => {
+    requestOTP: useCallback(async (phone: string) => {
       try {
-        const response = await apiService.registerUser(phone, name);
+        await apiService.requestOTP(phone);
+      } catch (error) {
+        console.error('OTP request error:', error);
+        throw error;
+      }
+    }, []),
+
+    register: useCallback(async (
+      name: string,
+      email: string,
+      phone: string,
+      password: string,
+      userType: 'user' | 'responder'
+    ) => {
+      try {
+        const response = await apiService.registerUser(name, email, phone, password, userType);
         await AsyncStorage.setItem('user', JSON.stringify(response));
         apiService.setAuthToken(response.token);
         dispatch({ type: 'SIGN_UP', payload: response });
@@ -101,9 +117,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }, []),
 
-    signIn: useCallback(async (phone: string) => {
+    signIn: useCallback(async (phone: string, otp: string) => {
       try {
-        const response = await apiService.loginUser(phone);
+        const response = await apiService.loginUser(phone, otp);
         await AsyncStorage.setItem('user', JSON.stringify(response));
         apiService.setAuthToken(response.token);
         dispatch({ type: 'SIGN_IN', payload: response });

@@ -16,12 +16,10 @@ class APIService {
   }
 
   // Auth endpoints
-  async registerUser(phone: string, name: string) {
+  async requestOTP(phone: string) {
     try {
-      const response = await this.api.post('/api/auth/register', {
+      const response = await this.api.post('/api/auth/request-otp', {
         phone_number: phone,
-        name,
-        is_responder: false,
       });
       return response.data;
     } catch (error) {
@@ -29,10 +27,32 @@ class APIService {
     }
   }
 
-  async loginUser(phone: string) {
+  async registerUser(
+    name: string,
+    email: string,
+    phone: string,
+    password: string,
+    userType: 'user' | 'responder'
+  ) {
+    try {
+      const response = await this.api.post('/api/auth/register', {
+        name,
+        email,
+        phone_number: phone,
+        password,
+        is_responder: userType === 'responder',
+      });
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async loginUser(phone: string, otp: string) {
     try {
       const response = await this.api.post('/api/auth/login', {
         phone_number: phone,
+        otp,
       });
       return response.data;
     } catch (error) {
