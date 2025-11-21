@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, NavigationIndependentTree } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { LoginScreen } from '../screens/LoginScreen';
 import { RegisterScreen } from '../screens/RegisterScreen';
@@ -16,12 +16,13 @@ export const RootNavigator: React.FC = () => {
   const { state } = useAuth();
 
   return (
-    <NavigationContainer>
-      <Stack.Navigator
-        screenOptions={{
-          headerShown: false,
-        }}
-      >
+    <NavigationIndependentTree>
+      <NavigationContainer>
+        <Stack.Navigator
+          screenOptions={{
+            headerShown: false,
+          }}
+        >
         {state.isLoading ? (
           // Loading screen can be added here
           <Stack.Screen name="Loading" component={LoadingScreen} />
@@ -98,8 +99,9 @@ export const RootNavigator: React.FC = () => {
             <Stack.Screen name="Register" component={RegisterScreen} />
           </Stack.Group>
         )}
-      </Stack.Navigator>
-    </NavigationContainer>
+        </Stack.Navigator>
+      </NavigationContainer>
+    </NavigationIndependentTree>
   );
 };
 
