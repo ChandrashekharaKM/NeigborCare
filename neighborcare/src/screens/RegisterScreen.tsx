@@ -24,7 +24,7 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [userType, setUserType] = useState<'user' | 'responder'>('user');
+  const [userType, setUserType] = useState<'user' | 'responder' | 'admin'>('user');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const { authContext } = useAuth();
@@ -207,6 +207,27 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
                   Provide emergency help
                 </Text>
               </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.userTypeButton,
+                  userType === 'admin' && styles.userTypeButtonActive,
+                ]}
+                onPress={() => setUserType('admin')}
+                disabled={loading}
+              >
+                <Text
+                  style={[
+                    styles.userTypeText,
+                    userType === 'admin' && styles.userTypeTextActive,
+                  ]}
+                >
+                  👨‍💼 Admin
+                </Text>
+                <Text style={styles.userTypeDescription}>
+                  Manage users & responders
+                </Text>
+              </TouchableOpacity>
             </View>
           </View>
 
@@ -328,6 +349,7 @@ const styles = StyleSheet.create({
   },
   userTypeContainer: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
     marginTop: 8,
   },

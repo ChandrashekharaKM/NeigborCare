@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -24,6 +24,14 @@ export const BecomeResponderScreen: React.FC<BecomeResponderScreenProps> = ({
   const [showTrainingModal, setShowTrainingModal] = useState(false);
   const [trainingProgress, setTrainingProgress] = useState(0);
   const [currentModule, setCurrentModule] = useState(0);
+
+  // Check if user needs to take exam first
+  useEffect(() => {
+    if (authState.user?.is_responder && !(authState.user as any).exam_passed) {
+      // Redirect to exam screen if responder but hasn't passed exam
+      navigation.navigate('ResponderExam');
+    }
+  }, [authState.user]);
 
   const trainingModules = [
     {
@@ -76,7 +84,16 @@ export const BecomeResponderScreen: React.FC<BecomeResponderScreenProps> = ({
   };
 
   const handleStartTraining = () => {
+    // For responders, they must take exam first
+    if (authState.user?.is_responder) {
+      navigation.navigate('ResponderExam');
+      return;
+    }
     setShowTrainingModal(true);
+  };
+
+  const handleTakeExam = () => {
+    navigation.navigate('ResponderExam');
   };
 
   const handleCompleteModule = async () => {
@@ -194,19 +211,25 @@ export const BecomeResponderScreen: React.FC<BecomeResponderScreenProps> = ({
         </View>
 
         <View style={styles.optionContainer}>
-          <Text style={styles.optionTitle}>Option 2: Basic Training</Text>
+          <Text style={styles.optionTitle}>
+            {authState.user?.is_responder ? 'Option 2: Take Certification Exam' : 'Option 2: Basic Training'}
+          </Text>
           <Text style={styles.optionDescription}>
-            Watch videos and take a quiz (~20 minutes)
+            {authState.user?.is_responder
+              ? 'Complete the responder certification exam with location tracking'
+              : 'Watch videos and take a quiz (~20 minutes)'}
           </Text>
           <TouchableOpacity
             style={[styles.optionButton, styles.primaryButton]}
-            onPress={handleStartTraining}
+            onPress={authState.user?.is_responder ? handleTakeExam : handleStartTraining}
             disabled={loading}
           >
             {loading ? (
               <ActivityIndicator color="#fff" />
             ) : (
-              <Text style={styles.primaryButtonText}>Start Training</Text>
+              <Text style={styles.primaryButtonText}>
+                {authState.user?.is_responder ? 'Take Exam' : 'Start Training'}
+              </Text>
             )}
           </TouchableOpacity>
         </View>

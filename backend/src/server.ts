@@ -26,6 +26,8 @@ import responderRoutes from './routes/responders';
 import emergencyRoutes from './routes/emergencies';
 import resourceRoutes from './routes/resources';
 import userRoutes from './routes/users';
+import adminRoutes from './routes/admin';
+import examRoutes from './routes/exams';
 
 // API Routes
 app.use('/api/auth', authRoutes);
@@ -33,6 +35,8 @@ app.use('/api/responders', responderRoutes);
 app.use('/api/emergency', emergencyRoutes);
 app.use('/api/resources', resourceRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/exams', examRoutes);
 
 // Health check
 app.get('/health', (req: Request, res: Response) => {

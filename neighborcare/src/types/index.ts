@@ -1,3 +1,5 @@
+export type UserRole = 'user' | 'responder' | 'admin';
+
 export interface User {
   id: string;
   phone_number: string;
@@ -6,6 +8,8 @@ export interface User {
   profile_picture?: string;
   created_at: string;
   is_responder: boolean;
+  is_admin?: boolean;
+  role?: UserRole;
 }
 
 export interface Responder extends User {
@@ -45,6 +49,35 @@ export interface LocationData {
   latitude: number;
   longitude: number;
   timestamp: number;
+}
+
+export interface ExamQuestion {
+  id: string;
+  question: string;
+  options: string[];
+  correctAnswer: number;
+  points: number;
+}
+
+export interface Exam {
+  id: string;
+  title: string;
+  description: string;
+  questions: ExamQuestion[];
+  passingScore: number;
+  duration: number; // in minutes
+}
+
+export interface ExamResult {
+  id: string;
+  userId: string;
+  examId: string;
+  score: number;
+  totalQuestions: number;
+  correctAnswers: number;
+  passed: boolean;
+  submittedAt: string;
+  answers: { questionId: string; selectedAnswer: number }[];
 }
 
 export interface AuthContextType {

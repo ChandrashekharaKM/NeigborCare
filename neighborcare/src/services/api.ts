@@ -1,6 +1,35 @@
 import axios, { AxiosInstance } from 'axios';
+import { Platform } from 'react-native';
 
-const API_BASE_URL = 'http://192.168.1.100:5000'; // Change to your backend URL
+// Determine the correct API URL based on platform
+// For Android emulator: use 10.0.2.2 (special IP that maps to host machine's localhost)
+// For iOS simulator: use localhost
+// For physical devices: use your computer's IP address (e.g., 192.168.0.174)
+const getApiBaseUrl = () => {
+  // You can manually set this to your computer's IP if testing on physical device
+  // Find your IP with: ipconfig (Windows) or ifconfig (Mac/Linux)
+  const MANUAL_IP = '192.168.0.174'; // Change this to your computer's IP if needed
+  
+  if (__DEV__) {
+    if (Platform.OS === 'android') {
+      // Android emulator uses 10.0.2.2 to access host machine's localhost
+      // For physical Android device, use your computer's IP
+      return `http://${MANUAL_IP}:5000`;
+    } else {
+      // iOS simulator can use localhost
+      // For physical iOS device, use your computer's IP
+      return `http://${MANUAL_IP}:5000`;
+    }
+  }
+  // For production
+  return `http://${MANUAL_IP}:5000`;
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
+// Log the API URL for debugging
+console.log('🔗 API Base URL:', API_BASE_URL);
+console.log('📱 Platform:', Platform.OS);
 
 class APIService {
   private api: AxiosInstance;
@@ -22,8 +51,11 @@ class APIService {
         phone_number: phone,
       });
       return response.data;
-    } catch (error) {
-      throw error;
+    } catch (error: any) {
+      console.error('OTP Request Error:', error);
+      // Extract error message from response
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to send OTP';
+      throw new Error(errorMessage);
     }
   }
 
@@ -32,19 +64,35 @@ class APIService {
     email: string,
     phone: string,
     password: string,
-    userType: 'user' | 'responder'
+    userType: 'user' | 'responder' | 'admin'
   ) {
     try {
+      console.log('Registering user with API URL:', API_BASE_URL);
       const response = await this.api.post('/api/auth/register', {
         name,
         email,
         phone_number: phone,
         password,
         is_responder: userType === 'responder',
+        is_admin: userType === 'admin',
       });
       return response.data;
-    } catch (error) {
-      throw error;
+    } catch (error: any) {
+      console.error('Registration Error Details:', {
+        message: error.message,
+        code: error.code,
+        response: error.response?.data,
+        url: error.config?.url,
+        baseURL: error.config?.baseURL,
+      });
+      
+      // Provide more helpful error messages
+      if (error.code === 'ECONNREFUSED' || error.message === 'Network Error') {
+        throw new Error(`Cannot connect to server at ${API_BASE_URL}. Please check if the backend is running.`);
+      }
+      
+      const errorMessage = error.response?.data?.error || error.message || 'Registration failed';
+      throw new Error(errorMessage);
     }
   }
 
@@ -55,8 +103,24 @@ class APIService {
         otp,
       });
       return response.data;
-    } catch (error) {
-      throw error;
+    } catch (error: any) {
+      console.error('Login Error:', error);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to login';
+      throw new Error(errorMessage);
+    }
+  }
+
+  async loginWithPassword(phone: string, password: string) {
+    try {
+      const response = await this.api.post('/api/auth/login-password', {
+        phone_number: phone,
+        password,
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Password Login Error:', error);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to login';
+      throw new Error(errorMessage);
     }
   }
 
@@ -239,6 +303,72 @@ class APIService {
 
   removeAuthToken() {
     delete this.api.defaults.headers.common['Authorization'];
+  }
+
+  // Admin endpoints
+  async getAllUsers() {
+    try {
+      const response = await this.api.get('/api/admin/users');
+      return response.data;
+    } catch (error: any) {
+      console.error('Get users error:', error);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to get users';
+      throw new Error(errorMessage);
+    }
+  }
+
+  async getResponders() {
+    try {
+      const response = await this.api.get('/api/admin/responders');
+      return response.data;
+    } catch (error: any) {
+      console.error('Get responders error:', error);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to get responders';
+      throw new Error(errorMessage);
+    }
+  }
+
+  async approveResponder(userId: string) {
+    try {
+      const response = await this.api.post(`/api/admin/responders/${userId}/approve`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Approve responder error:', error);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to approve responder';
+      throw new Error(errorMessage);
+    }
+  }
+
+  // Exam endpoints
+  async getExam(examId: string) {
+    try {
+      const response = await this.api.get(`/api/exams/${examId}`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Get exam error:', error);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to get exam';
+      throw new Error(errorMessage);
+    }
+  }
+
+  async submitExam(examData: {
+    userId: string;
+    examId: string;
+    score: number;
+    totalQuestions: number;
+    correctAnswers: number;
+    answers: { questionId: string; selectedAnswer: number }[];
+    passed: boolean;
+    location: { latitude: number; longitude: number } | null;
+  }) {
+    try {
+      const response = await this.api.post('/api/exams/submit', examData);
+      return response.data;
+    } catch (error: any) {
+      console.error('Submit exam error:', error);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to submit exam';
+      throw new Error(errorMessage);
+    }
   }
 }
 

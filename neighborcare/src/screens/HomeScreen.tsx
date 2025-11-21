@@ -261,13 +261,31 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           <Text style={styles.actionButtonText}>Nearby Resources</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={() => navigation.navigate('BecomeResponder')}
-        >
-          <Text style={styles.actionButtonEmoji}>🤝</Text>
-          <Text style={styles.actionButtonText}>Become Responder</Text>
-        </TouchableOpacity>
+        {authState.user?.is_admin ? (
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => navigation.navigate('AdminDashboard')}
+          >
+            <Text style={styles.actionButtonEmoji}>👨‍💼</Text>
+            <Text style={styles.actionButtonText}>Admin Dashboard</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => {
+              if (authState.user?.is_responder) {
+                navigation.navigate('ResponderDashboard');
+              } else {
+                navigation.navigate('BecomeResponder');
+              }
+            }}
+          >
+            <Text style={styles.actionButtonEmoji}>🤝</Text>
+            <Text style={styles.actionButtonText}>
+              {authState.user?.is_responder ? 'Responder Dashboard' : 'Become Responder'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Sign Out */}

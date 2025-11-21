@@ -35,7 +35,7 @@ router.post('/request-otp', async (req: Request, res: Response) => {
 // POST /api/auth/register
 router.post('/register', async (req: Request, res: Response) => {
   try {
-    const { name, email, phone_number, password, is_responder } = req.body;
+    const { name, email, phone_number, password, is_responder, is_admin } = req.body;
 
     // Validate input
     if (!name || !email || !phone_number || !password) {
@@ -55,6 +55,7 @@ router.post('/register', async (req: Request, res: Response) => {
       email,
       phone_number,
       is_responder: is_responder || false,
+      is_admin: is_admin || false,
       token: 'jwt_token_here',
     });
   } catch (error) {
@@ -62,7 +63,7 @@ router.post('/register', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/auth/login
+// POST /api/auth/login (OTP login)
 router.post('/login', async (req: Request, res: Response) => {
   try {
     const { phone_number, otp } = req.body;
@@ -92,6 +93,34 @@ router.post('/login', async (req: Request, res: Response) => {
     // TODO: Find user by phone
     // TODO: Generate JWT token
 
+    res.status(200).json({
+      id: 'user123',
+      phone_number,
+      name: 'User Name',
+      email: 'user@example.com',
+      is_responder: false,
+      token: 'jwt_token_here',
+    });
+  } catch (error) {
+    res.status(401).json({ error: 'Login failed' });
+  }
+});
+
+// POST /api/auth/login-password (Password login)
+router.post('/login-password', async (req: Request, res: Response) => {
+  try {
+    const { phone_number, password } = req.body;
+
+    if (!phone_number || !password) {
+      return res.status(400).json({ error: 'Phone number and password are required' });
+    }
+
+    // TODO: Find user by phone number
+    // TODO: Verify password using bcrypt
+    // TODO: Generate JWT token
+
+    // For now, return mock response
+    // In production, verify password hash from database
     res.status(200).json({
       id: 'user123',
       phone_number,

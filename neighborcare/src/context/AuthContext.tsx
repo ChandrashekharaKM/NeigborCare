@@ -51,8 +51,9 @@ export const AuthContext = createContext<{
   state: AuthState;
   authContext: {
     requestOTP: (phone: string) => Promise<void>;
-    register: (name: string, email: string, phone: string, password: string, userType: 'user' | 'responder') => Promise<void>;
+    register: (name: string, email: string, phone: string, password: string, userType: 'user' | 'responder' | 'admin') => Promise<void>;
     signIn: (phone: string, otp: string) => Promise<void>;
+    signInWithPassword: (phone: string, password: string) => Promise<void>;
     signOut: () => Promise<void>;
   };
 }>({
@@ -61,6 +62,7 @@ export const AuthContext = createContext<{
     requestOTP: async () => {},
     register: async () => {},
     signIn: async () => {},
+    signInWithPassword: async () => {},
     signOut: async () => {},
   },
 });
@@ -104,16 +106,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       email: string,
       phone: string,
       password: string,
-      userType: 'user' | 'responder'
+      userType: 'user' | 'responder' | 'admin'
     ) => {
       try {
         const response = await apiService.registerUser(name, email, phone, password, userType);
         await AsyncStorage.setItem('user', JSON.stringify(response));
         apiService.setAuthToken(response.token);
         dispatch({ type: 'SIGN_UP', payload: response });
-      } catch (error) {
+      } catch (error: any) {
         console.error('Registration error:', error);
-        throw error;
+        // Provide user-friendly error message
+        const errorMessage = error?.message || 'Registration failed. Please check your connection.';
+        throw new Error(errorMessage);
       }
     }, []),
 
@@ -125,6 +129,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         dispatch({ type: 'SIGN_IN', payload: response });
       } catch (error) {
         console.error('Sign in error:', error);
+        throw error;
+      }
+    }, []),
+
+    signInWithPassword: useCallback(async (phone: string, password: string) => {
+      try {
+        const response = await apiService.loginWithPassword(phone, password);
+        await AsyncStorage.setItem('user', JSON.stringify(response));
+        apiService.setAuthToken(response.token);
+        dispatch({ type: 'SIGN_IN', payload: response });
+      } catch (error) {
+        console.error('Password sign in error:', error);
         throw error;
       }
     }, []),

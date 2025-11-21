@@ -12,69 +12,79 @@ import {
   TouchableWithoutFeedback,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { Ionicons } from '@expo/vector-icons';
 
 interface LoginScreenProps {
   navigation: any;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
-  const [phone, setPhone] = useState('');
-  const [otp, setOtp] = useState('');
+  const [phoneOrEmail, setPhoneOrEmail] = useState('');
+  const [otpOrPassword, setOtpOrPassword] = useState('');
+  const [useOtp, setUseOtp] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sendingOtp, setSendingOtp] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const { authContext } = useAuth();
 
   const handleRequestOTP = async () => {
-    if (!phone.trim()) {
-      Alert.alert('Error', 'Please enter your phone number');
+    if (!phoneOrEmail.trim()) {
+      Alert.alert('Error', 'Please enter your phone number or email');
       return;
     }
 
-    // Basic phone validation
-    if (phone.length < 10) {
+    // Check if it's a phone number (contains only digits)
+    const isPhone = /^\d+$/.test(phoneOrEmail.replace(/[\s\-\(\)]/g, ''));
+    
+    if (isPhone && phoneOrEmail.replace(/[\s\-\(\)]/g, '').length < 10) {
       Alert.alert('Error', 'Please enter a valid phone number');
       return;
     }
 
     setSendingOtp(true);
     try {
-      await authContext.requestOTP(phone);
+      // If it's an email, we might need a different endpoint, but for now use phone
+      const phoneNumber = isPhone ? phoneOrEmail : phoneOrEmail; // In production, handle email differently
+      await authContext.requestOTP(phoneNumber);
+      setUseOtp(true);
       setOtpSent(true);
-      Alert.alert('Success', 'OTP has been sent to your phone number');
+      Alert.alert('Success', 'OTP has been sent. Check the backend console for the OTP code.');
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to send OTP');
+      console.error('OTP Request Error:', error);
+      const errorMessage = error?.message || 'Failed to send OTP. Please check your connection and try again.';
+      Alert.alert('Error', errorMessage);
     } finally {
       setSendingOtp(false);
     }
   };
 
   const handleLogin = async () => {
-    if (!phone.trim() || !otp.trim()) {
-      Alert.alert('Error', 'Please enter phone number and OTP');
-      return;
-    }
-
-    if (otp.length !== 6) {
-      Alert.alert('Error', 'OTP must be 6 digits');
+    if (!phoneOrEmail.trim() || !otpOrPassword.trim()) {
+      Alert.alert('Error', 'Please fill in all fields');
       return;
     }
 
     setLoading(true);
     try {
-      await authContext.signIn(phone, otp);
+      if (useOtp && otpSent) {
+        // OTP login
+        if (otpOrPassword.length !== 6) {
+          Alert.alert('Error', 'OTP must be 6 digits');
+          setLoading(false);
+          return;
+        }
+        await authContext.signIn(phoneOrEmail, otpOrPassword);
+      } else {
+        // Password login
+        await authContext.signInWithPassword(phoneOrEmail, otpOrPassword);
+      }
     } catch (error: any) {
       Alert.alert('Login Failed', error.message || 'Failed to login');
-      // Reset OTP on failure
-      setOtp('');
+      setOtpOrPassword('');
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleChangePhone = () => {
-    setOtpSent(false);
-    setOtp('');
   };
 
   return (
@@ -86,76 +96,95 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
         </View>
 
         <View style={styles.formContainer}>
-          <Text style={styles.title}>Welcome Back</Text>
-          <Text style={styles.subtitle}>Sign in with your phone number and OTP</Text>
+          <Text style={styles.title}>Login</Text>
 
-          <View>
-            <Text style={styles.label}>Phone Number</Text>
+          {/* Phone/Email Field */}
+          <View style={styles.inputWrapper}>
+            <Text style={styles.label}>Phone No / Email</Text>
             <TextInput
               style={styles.input}
-              placeholder="Enter phone number"
+              placeholder="Enter phone number or email"
               placeholderTextColor="#999"
-              keyboardType="phone-pad"
-              value={phone}
-              onChangeText={setPhone}
-              editable={!otpSent && !loading}
+              keyboardType="default"
+              autoCapitalize="none"
+              value={phoneOrEmail}
+              onChangeText={(text) => {
+                setPhoneOrEmail(text);
+                // Reset OTP mode if user changes phone/email
+                if (otpSent) {
+                  setOtpSent(false);
+                  setUseOtp(false);
+                  setOtpOrPassword('');
+                }
+              }}
+              editable={!loading}
             />
           </View>
 
-          {!otpSent ? (
-            <TouchableOpacity
-              style={[styles.button, sendingOtp && styles.buttonDisabled]}
-              onPress={handleRequestOTP}
-              disabled={sendingOtp}
-            >
-              {sendingOtp ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.buttonText}>Send OTP</Text>
-              )}
-            </TouchableOpacity>
-          ) : (
-            <>
-              <View>
-                <Text style={styles.label}>Enter OTP</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter 6-digit OTP"
-                  placeholderTextColor="#999"
-                  keyboardType="number-pad"
-                  value={otp}
-                  onChangeText={setOtp}
-                  maxLength={6}
-                  editable={!loading}
-                />
-                <TouchableOpacity onPress={handleChangePhone} style={styles.resendContainer}>
-                  <Text style={styles.resendText}>Change phone number</Text>
-                </TouchableOpacity>
-              </View>
-
+          {/* OTP/Password Field with OTP Button */}
+          <View style={styles.inputWrapper}>
+            <Text style={styles.label}>{useOtp && otpSent ? 'OTP' : 'Password'}</Text>
+            <View style={styles.otpPasswordContainer}>
+              <TextInput
+                style={styles.otpPasswordInput}
+                placeholder={useOtp && otpSent ? 'Enter OTP' : 'Enter password'}
+                placeholderTextColor="#999"
+                keyboardType={useOtp && otpSent ? 'number-pad' : 'default'}
+                secureTextEntry={!useOtp && !showPassword}
+                value={otpOrPassword}
+                onChangeText={setOtpOrPassword}
+                maxLength={useOtp && otpSent ? 6 : undefined}
+                editable={!loading}
+              />
               <TouchableOpacity
-                style={[styles.button, loading && styles.buttonDisabled]}
-                onPress={handleLogin}
-                disabled={loading}
+                style={[styles.otpButton, sendingOtp && styles.otpButtonDisabled]}
+                onPress={handleRequestOTP}
+                disabled={sendingOtp || loading || !phoneOrEmail.trim()}
               >
-                {loading ? (
-                  <ActivityIndicator color="#fff" />
+                {sendingOtp ? (
+                  <ActivityIndicator color="#fff" size="small" />
                 ) : (
-                  <Text style={styles.buttonText}>Verify & Sign In</Text>
+                  <Text style={styles.otpButtonText}>OTP</Text>
                 )}
               </TouchableOpacity>
-
+            </View>
+            {!useOtp && (
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                style={styles.eyeIconContainer}
+              >
+                <Ionicons
+                  name={showPassword ? 'eye-off' : 'eye'}
+                  size={20}
+                  color="#999"
+                />
+              </TouchableOpacity>
+            )}
+            {useOtp && otpSent && (
               <TouchableOpacity
                 onPress={handleRequestOTP}
                 disabled={sendingOtp}
                 style={styles.resendOtpButton}
               >
                 <Text style={styles.resendOtpText}>
-                  {sendingOtp ? 'Sending...' : "Didn't receive OTP? Resend"}
+                  {sendingOtp ? 'Sending...' : "Didn't receive? Resend OTP"}
                 </Text>
               </TouchableOpacity>
-            </>
-          )}
+            )}
+          </View>
+
+          {/* Sign In Button */}
+          <TouchableOpacity
+            style={[styles.button, loading && styles.buttonDisabled]}
+            onPress={handleLogin}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.buttonText}>Sign In</Text>
+            )}
+          </TouchableOpacity>
 
           <View style={styles.divider}>
             <View style={styles.line} />
@@ -222,14 +251,13 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   title: {
-    fontSize: 24,
-    fontWeight: '600',
+    fontSize: 28,
+    fontWeight: 'bold',
     color: '#333',
-    marginBottom: 8,
+    marginBottom: 30,
+    textAlign: 'center',
   },
-  subtitle: {
-    fontSize: 14,
-    color: '#999',
+  inputWrapper: {
     marginBottom: 20,
   },
   label: {
@@ -244,27 +272,53 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 15,
     paddingVertical: 12,
-    marginBottom: 15,
     fontSize: 16,
     color: '#333',
   },
-  resendContainer: {
-    marginTop: -10,
-    marginBottom: 10,
-    alignItems: 'flex-end',
+  otpPasswordContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    overflow: 'hidden',
   },
-  resendText: {
-    color: '#e74c3c',
-    fontSize: 12,
-    fontWeight: '500',
+  otpPasswordInput: {
+    flex: 1,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: '#333',
+  },
+  otpButton: {
+    backgroundColor: '#3498db',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 70,
+  },
+  otpButtonDisabled: {
+    opacity: 0.6,
+  },
+  otpButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  eyeIconContainer: {
+    position: 'absolute',
+    right: 90,
+    top: 40,
+    padding: 5,
   },
   resendOtpButton: {
-    paddingVertical: 10,
-    alignItems: 'center',
+    marginTop: 8,
+    alignItems: 'flex-end',
   },
   resendOtpText: {
     color: '#e74c3c',
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '500',
   },
   button: {

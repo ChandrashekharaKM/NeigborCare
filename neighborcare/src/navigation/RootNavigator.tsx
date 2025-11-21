@@ -7,6 +7,8 @@ import { HomeScreen } from '../screens/HomeScreen';
 import { EmergencyTrackingScreen } from '../screens/EmergencyTrackingScreen';
 import { BecomeResponderScreen } from '../screens/BecomeResponderScreen';
 import { ResponderDashboardScreen } from '../screens/ResponderDashboardScreen';
+import { AdminDashboardScreen } from '../screens/AdminDashboardScreen';
+import { ResponderExamScreen } from '../screens/ResponderExamScreen';
 import { useAuth } from '../context/AuthContext';
 import { NearbyResourcesScreen } from '../screens/NearbyResourcesScreen';
 
@@ -89,6 +91,27 @@ export const RootNavigator: React.FC = () => {
               component={PlaceholderScreen}
               options={{
                 title: 'Responding to Emergency',
+              }}
+            />
+            <Stack.Screen
+              name="AdminDashboard"
+              component={AdminDashboardScreen}
+              options={{
+                title: 'Admin Dashboard',
+              }}
+            />
+            <Stack.Screen
+              name="ResponderExam"
+              component={ResponderExamScreen}
+              options={{
+                title: 'Responder Exam',
+              }}
+            />
+            <Stack.Screen
+              name="ConductExam"
+              component={ResponderExamScreen}
+              options={{
+                title: 'Conduct Exam',
               }}
             />
           </Stack.Group>
