@@ -24,7 +24,8 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [userType, setUserType] = useState<'user' | 'responder' | 'admin'>('user');
+  // UPDATED: Removed 'admin' from the allowed types here
+  const [userType, setUserType] = useState<'user' | 'responder'>('user');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const { authContext } = useAuth();
@@ -62,7 +63,11 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
 
     setLoading(true);
     try {
+      // @ts-ignore
       await authContext.register(name, email, phone, password, userType);
+      Alert.alert('Success', 'Account created successfully!', [
+        { text: 'OK', onPress: () => navigation.navigate('Home') }
+      ]);
     } catch (error: any) {
       Alert.alert('Registration Failed', error.message || 'Failed to register');
     } finally {
@@ -165,6 +170,8 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
 
           <View>
             <Text style={styles.label}>Account Type *</Text>
+            
+            {/* UPDATED: Only two buttons inside this View */}
             <View style={styles.userTypeContainer}>
               <TouchableOpacity
                 style={[
@@ -205,27 +212,6 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
                 </Text>
                 <Text style={styles.userTypeDescription}>
                   Provide emergency help
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.userTypeButton,
-                  userType === 'admin' && styles.userTypeButtonActive,
-                ]}
-                onPress={() => setUserType('admin')}
-                disabled={loading}
-              >
-                <Text
-                  style={[
-                    styles.userTypeText,
-                    userType === 'admin' && styles.userTypeTextActive,
-                  ]}
-                >
-                  👨‍💼 Admin
-                </Text>
-                <Text style={styles.userTypeDescription}>
-                  Manage users & responders
                 </Text>
               </TouchableOpacity>
             </View>

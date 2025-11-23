@@ -59,6 +59,7 @@ class APIService {
     }
   }
 
+  // ... inside registerUser method ...
   async registerUser(
     name: string,
     email: string,
@@ -67,7 +68,7 @@ class APIService {
     userType: 'user' | 'responder' | 'admin'
   ) {
     try {
-      console.log('Registering user with API URL:', API_BASE_URL);
+      console.log('Registering user...');
       const response = await this.api.post('/api/auth/register', {
         name,
         email,
@@ -78,21 +79,12 @@ class APIService {
       });
       return response.data;
     } catch (error: any) {
-      console.error('Registration Error Details:', {
-        message: error.message,
-        code: error.code,
-        response: error.response?.data,
-        url: error.config?.url,
-        baseURL: error.config?.baseURL,
-      });
-      
-      // Provide more helpful error messages
-      if (error.code === 'ECONNREFUSED' || error.message === 'Network Error') {
-        throw new Error(`Cannot connect to server at ${API_BASE_URL}. Please check if the backend is running.`);
+      // Check if the server sent a specific error message (like "User already exists")
+      if (error.response && error.response.data && error.response.data.error) {
+        throw new Error(error.response.data.error);
       }
-      
-      const errorMessage = error.response?.data?.error || error.message || 'Registration failed';
-      throw new Error(errorMessage);
+      // Fallback error
+      throw new Error('Registration failed. Please check your connection.');
     }
   }
 

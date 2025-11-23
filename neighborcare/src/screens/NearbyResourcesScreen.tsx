@@ -3,41 +3,23 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
   ActivityIndicator,
   FlatList,
   Linking,
   Alert,
+  Platform,
 } from 'react-native';
 import geolocationService from '../services/geolocation';
 import apiService from '../services/api';
 import { LocationData } from '../types';
 
-interface Resource {
-  id: string;
-  name: string;
-  type: string;
-  latitude: number;
-  longitude: number;
-  phone?: string;
-  address?: string;
-  is_24_hours?: boolean;
-  distance?: number;
-}
-
-interface NearbyResourcesScreenProps {
-  navigation: any;
-}
-
-export const NearbyResourcesScreen: React.FC<NearbyResourcesScreenProps> = ({
+export const NearbyResourcesScreen: React.FC<{ navigation: any }> = ({
   navigation,
 }) => {
-  const [resources, setResources] = useState<Resource[]>([]);
+  const [resources, setResources] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<'all' | 'hospital' | 'pharmacy' | 'clinic'>('all');
   const [location, setLocation] = useState<LocationData | null>(null);
-  const [sortBy, setSortBy] = useState<'distance' | 'name'>('distance');
 
   useEffect(() => {
     initializeScreen();
@@ -45,474 +27,179 @@ export const NearbyResourcesScreen: React.FC<NearbyResourcesScreenProps> = ({
 
   const initializeScreen = async () => {
     try {
-      // Get current location
       const currentLocation = await geolocationService.getCurrentLocation();
       if (currentLocation) {
         setLocation(currentLocation);
         await loadNearbyResources(currentLocation);
+      } else {
+        Alert.alert('GPS Error', 'Could not determine your location.');
+        setLoading(false);
       }
     } catch (error) {
-      console.error('Error initializing screen:', error);
-    } finally {
       setLoading(false);
     }
   };
 
   const loadNearbyResources = async (loc: LocationData) => {
     try {
+      // Fetch actual data from backend (which calls OSM)
       const response = await apiService.getNearbyResources(
-        loc.latitude,
-        loc.longitude,
-        5000 // 5km radius
+        loc.latitude, 
+        loc.longitude, 
+        3000 // 3km radius search
       );
-
-      // Calculate distances
-      const resourcesWithDistance = response.resources.map((res: Resource) => {
-        const distance = geolocationService.calculateDistance(
-          loc.latitude,
-          loc.longitude,
-          res.latitude,
-          res.longitude
-        );
-        return { ...res, distance };
-      });
-
-      setResources(resourcesWithDistance);
+      setResources(response.resources || []);
     } catch (error) {
-      console.error('Error loading resources:', error);
-      // Use mock data for demo
-      setResources(getMockResources());
+      Alert.alert('Error', 'Failed to load nearby resources.');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const getMockResources = () => [
-    {
-      id: '1',
-      name: 'Central Hospital',
-      type: 'hospital',
-      latitude: 40.7128,
-      longitude: -74.006,
-      phone: '+1-555-0100',
-      address: '123 Main St',
-      is_24_hours: true,
-      distance: 450,
-    },
-    {
-      id: '2',
-      name: 'City Clinic',
-      type: 'clinic',
-      latitude: 40.715,
-      longitude: -74.008,
-      phone: '+1-555-0101',
-      address: '456 Oak Ave',
-      is_24_hours: false,
-      distance: 650,
-    },
-    {
-      id: '3',
-      name: '24/7 Pharmacy',
-      type: 'pharmacy',
-      latitude: 40.71,
-      longitude: -74.005,
-      phone: '+1-555-0102',
-      address: '789 Elm Rd',
-      is_24_hours: true,
-      distance: 380,
-    },
-    {
-      id: '4',
-      name: 'Emergency Care Center',
-      type: 'hospital',
-      latitude: 40.705,
-      longitude: -74.012,
-      phone: '+1-555-0103',
-      address: '321 Pine Ln',
-      is_24_hours: true,
-      distance: 1200,
-    },
-  ];
+  const handleDirections = (lat: number, lon: number, name: string) => {
+    // Opens Google Maps or Apple Maps
+    const scheme = Platform.select({ ios: 'maps:0,0?q=', android: 'geo:0,0?q=' });
+    const latLng = `${lat},${lon}`;
+    const label = name;
+    const url = Platform.select({
+      ios: `${scheme}${label}@${latLng}`,
+      android: `${scheme}${latLng}(${label})`
+    });
 
-  const getTypeEmoji = (type: string) => {
-    switch (type) {
-      case 'hospital':
-        return '🏥';
-      case 'clinic':
-        return '⚕️';
-      case 'pharmacy':
-        return '💊';
-      default:
-        return '🏢';
-    }
-  };
-
-  const getTypeLabel = (type: string) => {
-    return type.charAt(0).toUpperCase() + type.slice(1);
-  };
-
-  const getFilteredAndSortedResources = () => {
-    let filtered = resources;
-
-    if (filter !== 'all') {
-      filtered = resources.filter((r) => r.type === filter);
-    }
-
-    if (sortBy === 'distance') {
-      filtered.sort((a, b) => (a.distance || 0) - (b.distance || 0));
-    } else {
-      filtered.sort((a, b) => a.name.localeCompare(b.name));
-    }
-
-    return filtered;
+    if (url) Linking.openURL(url);
   };
 
   const handleCall = (phone: string) => {
-    if (!phone) return;
-    Alert.alert(
-      'Call',
-      `Call ${phone}?`,
-      [
-        { text: 'Cancel', onPress: () => {} },
-        {
-          text: 'Call',
-          onPress: () => Linking.openURL(`tel:${phone}`),
-        },
-      ]
-    );
+    Linking.openURL(`tel:${phone}`);
   };
 
-  const handleDirections = (lat: number, lon: number) => {
-    const url = `geo:${lat},${lon}`;
-    Linking.openURL(url).catch(() => {
-      Alert.alert('Error', 'Could not open directions');
-    });
+  const getCategoryEmoji = (type: string) => {
+    if (type.includes('hospital')) return '🏥';
+    if (type.includes('clinic') || type.includes('doctors')) return '⚕️';
+    if (type.includes('pharmacy')) return '💊';
+    if (type.includes('police')) return '🚓';
+    if (type.includes('fire')) return '🚒';
+    return '📍';
   };
 
-  const renderResourceCard = ({ item }: { item: Resource }) => (
-    <View style={styles.resourceCard}>
+  const renderResourceCard = ({ item }: { item: any }) => (
+    <View style={styles.card}>
       <View style={styles.cardHeader}>
-        <View style={styles.titleContainer}>
-          <Text style={styles.typeEmoji}>{getTypeEmoji(item.type)}</Text>
-          <View style={styles.titleContent}>
-            <Text style={styles.resourceName}>{item.name}</Text>
-            <Text style={styles.resourceType}>{getTypeLabel(item.type)}</Text>
-          </View>
+        <Text style={styles.cardEmoji}>{getCategoryEmoji(item.type)}</Text>
+        <View style={styles.cardContent}>
+          <Text style={styles.cardTitle}>{item.name}</Text>
+          <Text style={styles.cardType}>{item.type.replace('_', ' ').toUpperCase()}</Text>
         </View>
-        {item.is_24_hours && (
-          <View style={styles.badgeOpen24}>
-            <Text style={styles.badge24Text}>24/7</Text>
-          </View>
-        )}
+        <View style={styles.distanceBadge}>
+          <Text style={styles.distanceText}>{item.distance}m</Text>
+        </View>
       </View>
 
-      {item.distance !== undefined && (
-        <View style={styles.distanceContainer}>
-          <Text style={styles.distance}>
-            📍 {geolocationService.formatDistance(item.distance)} away
-          </Text>
-        </View>
-      )}
+      <View style={styles.divider} />
 
-      {item.address && (
-        <Text style={styles.address}>{item.address}</Text>
-      )}
+      {/* ADDRESS DISPLAY */}
+      <Text style={styles.addressLabel}>ADDRESS:</Text>
+      <Text style={styles.addressText}>
+        {item.address !== "Address details unavailable" 
+          ? item.address 
+          : "📍 Tap 'Go Now' to see location on map"}
+      </Text>
 
-      <View style={styles.actionButtons}>
+      <View style={styles.actionRow}>
         {item.phone && (
-          <TouchableOpacity
-            style={styles.actionButton}
-              onPress={() => handleCall(item.phone!)}
-          >
-            <Text style={styles.actionButtonEmoji}>📞</Text>
-            <Text style={styles.actionButtonText}>Call</Text>
+          <TouchableOpacity style={[styles.btn, styles.btnOutline]} onPress={() => handleCall(item.phone)}>
+            <Text style={styles.btnTextOutline}>📞 Call</Text>
           </TouchableOpacity>
         )}
-
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={() => handleDirections(item.latitude, item.longitude)}
+        
+        <TouchableOpacity 
+          style={[styles.btn, styles.btnFill]} 
+          onPress={() => handleDirections(item.latitude, item.longitude, item.name)}
         >
-          <Text style={styles.actionButtonEmoji}>🗺️</Text>
-          <Text style={styles.actionButtonText}>Directions</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.actionButton}>
-          <Text style={styles.actionButtonEmoji}>⭐</Text>
-          <Text style={styles.actionButtonText}>Save</Text>
+          <Text style={styles.btnTextFill}>🗺️ Go Now</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 
-  const filteredResources = getFilteredAndSortedResources();
-
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
+      <View style={styles.center}>
         <ActivityIndicator size="large" color="#e74c3c" />
+        <Text style={styles.loadingText}>Scanning area for help...</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text style={styles.backButton}>← Back</Text>
+          <Text style={styles.backBtn}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>Nearby Resources</Text>
-        <View style={{ width: 40 }} />
+        <Text style={styles.title}>Nearby Help (Top 5)</Text>
+        <View style={{width: 40}} />
       </View>
 
-      {/* Filter and Sort */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.controlsContainer}
-        contentContainerStyle={styles.controlsContent}
-      >
-        {/* Type Filters */}
-        {['all', 'hospital', 'clinic', 'pharmacy'].map((type) => (
-          <TouchableOpacity
-            key={type}
-            style={[
-              styles.filterButton,
-              filter === type && styles.filterButtonActive,
-            ]}
-            onPress={() => setFilter(type as any)}
-          >
-            <Text
-              style={[
-                styles.filterButtonText,
-                filter === type && styles.filterButtonTextActive,
-              ]}
-            >
-              {type === 'all' ? '📍 All' : getTypeEmoji(type) + ' ' + getTypeLabel(type)}
-            </Text>
-          </TouchableOpacity>
-        ))}
-
-        {/* Sort Options */}
-        <View style={styles.divider} />
-
-        {['distance', 'name'].map((sort) => (
-          <TouchableOpacity
-            key={sort}
-            style={[
-              styles.filterButton,
-              sortBy === sort && styles.filterButtonActive,
-            ]}
-            onPress={() => setSortBy(sort as any)}
-          >
-            <Text
-              style={[
-                styles.filterButtonText,
-                sortBy === sort && styles.filterButtonTextActive,
-              ]}
-            >
-              {sort === 'distance' ? '📏 Distance' : '📝 Name'}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      {/* Resources List */}
-      {filteredResources.length > 0 ? (
+      {resources.length === 0 ? (
+        <View style={styles.center}>
+          <Text style={styles.emptyEmoji}>🔍</Text>
+          <Text style={styles.emptyText}>No emergency resources found nearby.</Text>
+          <Text style={styles.emptySubtext}>Try moving to a different area or searching manually.</Text>
+        </View>
+      ) : (
         <FlatList
-          data={filteredResources}
+          data={resources}
           renderItem={renderResourceCard}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
-          scrollEnabled={true}
+          contentContainerStyle={styles.list}
         />
-      ) : (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyEmoji}>🔍</Text>
-          <Text style={styles.emptyTitle}>No Resources Found</Text>
-          <Text style={styles.emptySubtitle}>
-            Try changing filters or expanding search radius
-          </Text>
-        </View>
       )}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f5f5f5',
-  },
+  container: { flex: 1, backgroundColor: '#f5f5f5' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 },
+  loadingText: { marginTop: 15, color: '#999' },
+  
+  emptyEmoji: { fontSize: 50, marginBottom: 10 },
+  emptyText: { fontSize: 18, fontWeight: 'bold', color: '#333', textAlign: 'center' },
+  emptySubtext: { fontSize: 14, color: '#777', textAlign: 'center', marginTop: 5 },
+  
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 15,
-    paddingVertical: 15,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    padding: 20, paddingTop: 50, backgroundColor: '#fff', elevation: 3,
   },
-  backButton: {
-    color: '#e74c3c',
-    fontSize: 14,
-    fontWeight: '600',
+  backBtn: { fontSize: 16, color: '#e74c3c', fontWeight: '600' },
+  title: { fontSize: 18, fontWeight: 'bold', color: '#333' },
+
+  list: { padding: 15 },
+  card: {
+    backgroundColor: '#fff', borderRadius: 12, padding: 15, marginBottom: 15,
+    elevation: 3, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 4,
   },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  controlsContainer: {
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  controlsContent: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  filterButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    marginHorizontal: 4,
-    borderRadius: 20,
-    backgroundColor: '#f0f0f0',
-  },
-  filterButtonActive: {
-    backgroundColor: '#e74c3c',
-  },
-  filterButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#999',
-  },
-  filterButtonTextActive: {
-    color: '#fff',
-  },
-  divider: {
-    width: 1,
-    height: 20,
-    backgroundColor: '#ddd',
-    marginHorizontal: 6,
-  },
-  listContent: {
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-  },
-  resourceCard: {
-    backgroundColor: '#fff',
+  cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  cardEmoji: { fontSize: 32, marginRight: 15 },
+  cardContent: { flex: 1 },
+  cardTitle: { fontSize: 16, fontWeight: 'bold', color: '#333' },
+  cardType: { fontSize: 12, color: '#999', fontWeight: '600', marginTop: 2 },
+  distanceBadge: {
+    backgroundColor: '#e3f2fd', paddingHorizontal: 10, paddingVertical: 5,
     borderRadius: 12,
-    padding: 15,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
   },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 10,
-  },
-  titleContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  typeEmoji: {
-    fontSize: 32,
-    marginRight: 12,
-  },
-  titleContent: {
-    flex: 1,
-  },
-  resourceName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 2,
-  },
-  resourceType: {
-    fontSize: 12,
-    color: '#999',
-  },
-  badgeOpen24: {
-    backgroundColor: '#4caf50',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  badge24Text: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  distanceContainer: {
-    marginBottom: 8,
-  },
-  distance: {
-    fontSize: 13,
-    color: '#e74c3c',
-    fontWeight: '600',
-  },
-  address: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 12,
-    lineHeight: 16,
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
-  },
-  actionButton: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 8,
-    marginHorizontal: 4,
-  },
-  actionButtonEmoji: {
-    fontSize: 18,
-    marginBottom: 4,
-  },
-  actionButtonText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#e74c3c',
-    textAlign: 'center',
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 30,
-  },
-  emptyEmoji: {
-    fontSize: 64,
-    marginBottom: 16,
-  },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  emptySubtitle: {
-    fontSize: 14,
-    color: '#999',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
+  distanceText: { fontSize: 12, color: '#2196f3', fontWeight: 'bold' },
+
+  divider: { height: 1, backgroundColor: '#eee', marginVertical: 10 },
+  
+  addressLabel: { fontSize: 10, color: '#bbb', fontWeight: '700', marginBottom: 4 },
+  addressText: { fontSize: 13, color: '#444', lineHeight: 18, marginBottom: 15 },
+
+  actionRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
+  btn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, minWidth: 100, alignItems: 'center' },
+  btnOutline: { borderWidth: 1, borderColor: '#e74c3c' },
+  btnFill: { backgroundColor: '#e74c3c' },
+  btnTextOutline: { color: '#e74c3c', fontWeight: '600' },
+  btnTextFill: { color: '#fff', fontWeight: '600' },
 });

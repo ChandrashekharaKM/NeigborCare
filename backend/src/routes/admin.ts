@@ -1,27 +1,15 @@
 import { Router, Request, Response } from 'express';
+import { users, deleteUserById } from '../data/store'; // <--- IMPORT SHARED STORE
 
 const router = Router();
 
 // GET /api/admin/users
 router.get('/users', async (req: Request, res: Response) => {
   try {
-    // TODO: Check if user is admin
-    // TODO: Fetch all users from database
-    
-    // Mock data for now
-    res.json({
-      users: [
-        {
-          id: 'user1',
-          name: 'John Doe',
-          email: 'john@example.com',
-          phone_number: '+1234567890',
-          is_responder: false,
-          is_admin: false,
-          created_at: new Date(),
-        },
-      ],
-    });
+    console.log('Admin fetching users. Total in DB:', users.length);
+    // Filter for Regular Users
+    const regularUsers = users.filter(u => !u.is_responder && !u.is_admin);
+    res.json({ users: regularUsers });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch users' });
   }
@@ -30,24 +18,9 @@ router.get('/users', async (req: Request, res: Response) => {
 // GET /api/admin/responders
 router.get('/responders', async (req: Request, res: Response) => {
   try {
-    // TODO: Check if user is admin
-    // TODO: Fetch all responders from database
-    
-    // Mock data for now
-    res.json({
-      responders: [
-        {
-          id: 'responder1',
-          name: 'Jane Smith',
-          email: 'jane@example.com',
-          phone_number: '+1234567891',
-          is_responder: true,
-          is_certified: false,
-          exam_passed: false,
-          created_at: new Date(),
-        },
-      ],
-    });
+    // Filter for Responders
+    const responders = users.filter(u => u.is_responder);
+    res.json({ responders });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch responders' });
   }
@@ -57,19 +30,34 @@ router.get('/responders', async (req: Request, res: Response) => {
 router.post('/responders/:userId/approve', async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;
+    const user = users.find(u => u.id === userId);
     
-    // TODO: Check if user is admin
-    // TODO: Update responder status in database
-    // TODO: Set is_certified = true, exam_passed = true
-    
-    res.json({
-      message: 'Responder approved successfully',
-      userId,
-    });
+    if (user) {
+        user.is_certified = true;
+        user.exam_passed = true;
+        res.json({ message: 'Approved', userId });
+    } else {
+        res.status(404).json({ error: 'User not found' });
+    }
   } catch (error) {
-    res.status(500).json({ error: 'Failed to approve responder' });
+    res.status(500).json({ error: 'Failed to approve' });
+  }
+});
+
+// DELETE /api/admin/users/:userId
+router.delete('/users/:userId', async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+    const deleted = deleteUserById(userId);
+    
+    if (deleted) {
+        res.json({ message: 'Deleted successfully', userId });
+    } else {
+        res.status(404).json({ error: 'User not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete' });
   }
 });
 
 export default router;
-

@@ -1,60 +1,45 @@
 import { Router, Request, Response } from 'express';
+import { users } from '../data/store'; // <--- IMPORT SHARED STORE
 
 const router = Router();
 
 // GET /api/exams/:examId
 router.get('/:examId', async (req: Request, res: Response) => {
+  // (Keep existing question logic, or use the mock data from previous steps)
   try {
-    const { examId } = req.params;
-    
-    // TODO: Fetch exam from database
-    
-    // Mock exam data
-    res.json({
-      exam: {
-        id: examId,
-        title: 'Responder Certification Exam',
-        description: 'Complete this exam to become a certified responder',
-        questions: [],
-        passingScore: 70,
-        duration: 30,
-      },
-    });
+      res.json({
+        exam: {
+          id: req.params.examId,
+          title: 'Responder Exam',
+          questions: [], // Populate if needed
+          passingScore: 80,
+          duration: 30,
+        },
+      });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch exam' });
+      res.status(500).json({ error: 'Failed to fetch exam' });
   }
 });
 
 // POST /api/exams/submit
 router.post('/submit', async (req: Request, res: Response) => {
   try {
-    const {
-      userId,
-      examId,
-      score,
-      totalQuestions,
-      correctAnswers,
-      answers,
-      passed,
-      location,
-    } = req.body;
+    const { userId, score, passed } = req.body;
 
-    // TODO: Save exam result to database
-    // TODO: If passed, update user's exam_passed = true, exam_score = score
-    // TODO: Save location if provided
+    // Find user in shared store
+    const user = users.find(u => u.id === userId);
+    
+    if (user) {
+        if (passed) {
+            user.exam_passed = true;
+            user.is_certified = true; // Auto-certify on pass
+            console.log(`User ${user.name} PASSED exam.`);
+        }
+    }
 
     res.json({
-      message: 'Exam submitted successfully',
-      result: {
-        id: 'result1',
-        userId,
-        examId,
-        score,
-        totalQuestions,
-        correctAnswers,
-        passed,
-        submittedAt: new Date(),
-      },
+      message: 'Exam submitted',
+      result: { userId, score, passed },
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to submit exam' });
@@ -62,4 +47,3 @@ router.post('/submit', async (req: Request, res: Response) => {
 });
 
 export default router;
-

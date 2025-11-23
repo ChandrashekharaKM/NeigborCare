@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useEffect, useReducer } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { User } from '../types';
+import { User } from '../types'; // Ensure this imports from your updated types file
 import apiService from '../services/api';
 
 type AuthState = {
@@ -10,7 +10,7 @@ type AuthState = {
 };
 
 type AuthAction =
-  | { type: 'RESTORE_TOKEN'; payload: User }
+  | { type: 'RESTORE_TOKEN'; payload: User | null }
   | { type: 'SIGN_IN'; payload: User }
   | { type: 'SIGN_OUT' }
   | { type: 'SIGN_UP'; payload: User };
@@ -51,7 +51,7 @@ export const AuthContext = createContext<{
   state: AuthState;
   authContext: {
     requestOTP: (phone: string) => Promise<void>;
-    register: (name: string, email: string, phone: string, password: string, userType: 'user' | 'responder' | 'admin') => Promise<void>;
+    register: (name: string, email: string, phone: string, password: string, userType: 'user' | 'responder') => Promise<void>;
     signIn: (phone: string, otp: string) => Promise<void>;
     signInWithPassword: (phone: string, password: string) => Promise<void>;
     signOut: () => Promise<void>;
@@ -72,20 +72,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const bootstrapAsync = async () => {
+      let user = null;
       try {
         // Restore user session
         const userData = await AsyncStorage.getItem('user');
         if (userData) {
-          const user = JSON.parse(userData);
-          apiService.setAuthToken(user.token);
-          dispatch({ type: 'RESTORE_TOKEN', payload: user });
-        } else {
-          dispatch({ type: 'SIGN_OUT' });
+          user = JSON.parse(userData);
+          console.log('🔄 Restoring Session. Role:', user.is_admin ? 'ADMIN' : user.is_responder ? 'RESPONDER' : 'USER');
+          
+          // Validate token existence
+          if (user.token) {
+            apiService.setAuthToken(user.token);
+          }
         }
       } catch (e) {
         console.error('Failed to restore session:', e);
-        dispatch({ type: 'SIGN_OUT' });
       }
+      dispatch({ type: 'RESTORE_TOKEN', payload: user });
     };
 
     bootstrapAsync();
@@ -106,7 +109,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       email: string,
       phone: string,
       password: string,
-      userType: 'user' | 'responder' | 'admin'
+      userType: 'user' | 'responder'
     ) => {
       try {
         const response = await apiService.registerUser(name, email, phone, password, userType);
@@ -115,9 +118,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         dispatch({ type: 'SIGN_UP', payload: response });
       } catch (error: any) {
         console.error('Registration error:', error);
-        // Provide user-friendly error message
-        const errorMessage = error?.message || 'Registration failed. Please check your connection.';
-        throw new Error(errorMessage);
+        throw error;
       }
     }, []),
 
@@ -136,6 +137,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     signInWithPassword: useCallback(async (phone: string, password: string) => {
       try {
         const response = await apiService.loginWithPassword(phone, password);
+        
+        // DEBUG LOG: Check what the backend actually sent
+        console.log('✅ Login Success. Admin Flag:', response.is_admin);
+
         await AsyncStorage.setItem('user', JSON.stringify(response));
         apiService.setAuthToken(response.token);
         dispatch({ type: 'SIGN_IN', payload: response });

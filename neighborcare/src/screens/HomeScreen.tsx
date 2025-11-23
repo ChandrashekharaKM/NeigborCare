@@ -4,168 +4,110 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ActivityIndicator,
-  Alert,
   ScrollView,
-  Modal,
+  Alert,
+  ActivityIndicator,
+  Animated,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import apiService from '../services/api';
 import geolocationService from '../services/geolocation';
-import { LocationData, Emergency } from '../types';
 
 interface HomeScreenProps {
   navigation: any;
 }
 
-const EMERGENCY_TYPES = ['Cardiac', 'Bleeding', 'Choking', 'Fracture', 'Other'];
-
 export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
-  const { state: authState, authContext } = useAuth();
+  const { state: authState } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [location, setLocation] = useState<LocationData | null>(null);
-  const [emergencies, setEmergencies] = useState<Emergency[]>([]);
-  const [showEmergencyModal, setShowEmergencyModal] = useState(false);
-  const [selectedEmergencyType, setSelectedEmergencyType] = useState<string | null>(null);
-  const [ongoingEmergency, setOngoingEmergency] = useState<Emergency | null>(null);
+  
+  // Animation state for the pulsing effect
+  const [pulseAnim] = useState(new Animated.Value(1));
 
   useEffect(() => {
-    initializeLocation();
-    loadEmergencyHistory();
+    startPulse();
   }, []);
 
-  const initializeLocation = async () => {
+  const startPulse = () => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  };
+
+  const handleSOS = async () => {
+    setLoading(true);
     try {
-      const permitted = await geolocationService.requestLocationPermissions();
-      if (!permitted) {
-        Alert.alert('Permission Denied', 'Location access is required for NeighborCare');
+      // 1. Get Current Location
+      const location = await geolocationService.getCurrentLocation();
+      if (!location) {
+        Alert.alert('GPS Error', 'Please enable location services to send an SOS.');
+        setLoading(false);
         return;
       }
 
-      const currentLocation = await geolocationService.getCurrentLocation();
-      if (currentLocation) {
-        setLocation(currentLocation);
-      }
-    } catch (error) {
-      console.error('Error initializing location:', error);
-    }
-  };
-
-  const loadEmergencyHistory = async () => {
-    try {
+      // 2. Send Emergency Alert to Backend
       if (authState.user) {
-        const history = await apiService.getUserEmergencyHistory(authState.user.id);
-        setEmergencies(history.emergencies);
+        const emergency = await apiService.createEmergency(
+          authState.user.id,
+          location.latitude,
+          location.longitude,
+          'Medical' 
+        );
 
-        // Check for ongoing emergency
-        const ongoing = history.emergencies.find((e: Emergency) => e.status === 'in-progress');
-        if (ongoing) {
-          setOngoingEmergency(ongoing);
-        }
+        // 3. Navigate to Tracking Screen
+        navigation.navigate('EmergencyTracking', { 
+          emergencyId: emergency.emergency.id 
+        });
       }
-    } catch (error) {
-      console.error('Error loading emergency history:', error);
-    }
-  };
-
-  const handleSOSPress = () => {
-    setShowEmergencyModal(true);
-  };
-
-  const handleEmergencyTypeSelect = async (type: string) => {
-    if (!location || !authState.user) {
-      Alert.alert('Error', 'Location data not available');
-      return;
-    }
-
-    setLoading(true);
-    setShowEmergencyModal(false);
-
-    try {
-      const response = await apiService.createEmergency(
-        authState.user.id,
-        location.latitude,
-        location.longitude,
-        type
-      );
-
-      setOngoingEmergency(response.emergency);
-      Alert.alert('SOS Sent', 'Emergency alert sent to nearby responders!');
-
-      // Navigate to emergency tracking screen
-      navigation.navigate('EmergencyTracking', { emergencyId: response.emergency.id });
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to send SOS');
+      Alert.alert('Connection Error', 'Could not create emergency alert. Please call 911 directly.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSignOut = async () => {
-    try {
-      await authContext.signOut();
-    } catch (error) {
-      Alert.alert('Error', 'Failed to sign out');
-    }
+  const handleTrackResponder = () => {
+    // Navigate to tracking screen (using a placeholder ID for demo)
+    navigation.navigate('EmergencyTracking', { 
+      emergencyId: 'active_emergency_id' 
+    });
   };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
-      {/* Header */}
+      {/* 1. Header Section */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.greeting}>Hello, {authState.user?.name}</Text>
-          <Text style={styles.subheading}>Stay safe with NeighborCare</Text>
+          <Text style={styles.welcomeText}>Hello,</Text>
+          <Text style={styles.userName}>{authState.user?.name || 'Neighbor'}</Text>
         </View>
-        <TouchableOpacity onPress={() => navigation.navigate('Profile')}>
-          <View style={styles.profileButton}>
-            <Text style={styles.profileInitial}>
-              {authState.user?.name?.[0].toUpperCase() || 'U'}
-            </Text>
-          </View>
+        <TouchableOpacity onPress={() => navigation.navigate('Profile')} style={styles.profileButton}>
+          <Text style={styles.profileInitials}>{authState.user?.name?.[0].toUpperCase() || 'U'}</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Location Status */}
-      <View style={styles.locationCard}>
-        <Text style={styles.locationTitle}>📍 Your Location</Text>
-        {location ? (
-          <View>
-            <Text style={styles.locationCoords}>
-              {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
-            </Text>
-            <TouchableOpacity onPress={initializeLocation}>
-              <Text style={styles.refreshLink}>Refresh Location</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <ActivityIndicator color="#e74c3c" />
-        )}
+      {/* Location Indicator */}
+      <View style={styles.locationBadge}>
+        <Text style={styles.locationText}>📍 Location Services Active</Text>
       </View>
 
-      {/* Ongoing Emergency */}
-      {ongoingEmergency && (
-        <View style={styles.ongoingCard}>
-          <Text style={styles.emergencyTitle}>🚨 Emergency in Progress</Text>
-          <Text style={styles.emergencyType}>{ongoingEmergency.emergency_type}</Text>
-          <TouchableOpacity
-            style={styles.trackButton}
-            onPress={() =>
-              navigation.navigate('EmergencyTracking', {
-                emergencyId: ongoingEmergency.id,
-              })
-            }
-          >
-            <Text style={styles.trackButtonText}>Track Responder</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* SOS Button */}
+      {/* 2. MAIN SOS BUTTON (Pulsing) */}
       <View style={styles.sosContainer}>
+        <Animated.View style={[styles.pulseCircle, { transform: [{ scale: pulseAnim }] }]} />
         <TouchableOpacity
-          style={[styles.sosButton, loading && styles.sosButtonDisabled]}
-          onPress={handleSOSPress}
+          style={styles.sosButton}
+          onPress={handleSOS}
           disabled={loading}
           activeOpacity={0.8}
         >
@@ -174,408 +116,124 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           ) : (
             <>
               <Text style={styles.sosText}>SOS</Text>
-              <Text style={styles.sosSubtext}>Tap for Emergency</Text>
+              <Text style={styles.sosSubtext}>Hold to Alert</Text>
             </>
           )}
         </TouchableOpacity>
       </View>
 
-      {/* Emergency Type Modal */}
-      <Modal visible={showEmergencyModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>What's the Emergency?</Text>
-            <Text style={styles.modalSubtitle}>
-              Select the type of emergency to alert nearby responders
-            </Text>
+      <Text style={styles.sectionTitle}>Emergency Actions</Text>
 
-            <View style={styles.emergencyTypesList}>
-              {EMERGENCY_TYPES.map((type) => (
-                <TouchableOpacity
-                  key={type}
-                  style={styles.typeButton}
-                  onPress={() => handleEmergencyTypeSelect(type)}
-                  disabled={loading}
-                >
-                  <Text style={styles.typeButtonText}>{type}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={() => setShowEmergencyModal(false)}
-              disabled={loading}
-            >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
+      {/* 3. Track Responder Card */}
+      <TouchableOpacity style={styles.trackCard} onPress={handleTrackResponder}>
+        <View style={styles.iconCircle}>
+          <Text style={styles.iconEmoji}>🗺️</Text>
         </View>
-      </Modal>
-
-      {/* Recent Emergencies */}
-      {emergencies.length > 0 && (
-        <View style={styles.historyContainer}>
-          <Text style={styles.historyTitle}>📋 Recent Emergencies</Text>
-          {emergencies.slice(0, 3).map((emergency) => (
-            <View key={emergency.id} style={styles.emergencyItem}>
-              <View style={styles.emergencyItemLeft}>
-                <Text style={styles.emergencyItemType}>{emergency.emergency_type}</Text>
-                <Text style={styles.emergencyItemDate}>
-                  {new Date(emergency.created_at).toLocaleDateString()}
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.emergencyItemStatus,
-                  emergency.status === 'resolved'
-                    ? styles.statusResolved
-                    : emergency.status === 'in-progress'
-                    ? styles.statusProgress
-                    : styles.statusPending,
-                ]}
-              >
-                <Text style={styles.emergencyItemStatusText}>
-                  {emergency.status.toUpperCase()}
-                </Text>
-              </View>
-            </View>
-          ))}
-
-          <TouchableOpacity
-            style={styles.viewAllButton}
-            onPress={() => navigation.navigate('EmergencyHistory')}
-          >
-            <Text style={styles.viewAllButtonText}>View All Emergencies</Text>
-          </TouchableOpacity>
+        <View style={styles.cardContent}>
+          <Text style={styles.cardTitle}>Track Responder</Text>
+          <Text style={styles.cardDesc}>View live location of incoming help</Text>
         </View>
-      )}
+        <Text style={styles.arrow}>→</Text>
+      </TouchableOpacity>
 
-      {/* Quick Actions */}
-      <View style={styles.actionsContainer}>
-        <TouchableOpacity
-          style={styles.actionButton}
+      <Text style={styles.sectionTitle}>Community & Tools</Text>
+
+      {/* 4. Action Grid */}
+      <View style={styles.grid}>
+        {/* Nearby Help */}
+        <TouchableOpacity 
+          style={styles.gridCard} 
           onPress={() => navigation.navigate('NearbyResources')}
         >
-          <Text style={styles.actionButtonEmoji}>🏥</Text>
-          <Text style={styles.actionButtonText}>Nearby Resources</Text>
+          <Text style={styles.gridEmoji}>🏥</Text>
+          <Text style={styles.gridTitle}>Nearby Help</Text>
         </TouchableOpacity>
 
-        {authState.user?.is_admin ? (
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => navigation.navigate('AdminDashboard')}
-          >
-            <Text style={styles.actionButtonEmoji}>👨‍💼</Text>
-            <Text style={styles.actionButtonText}>Admin Dashboard</Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => {
-              if (authState.user?.is_responder) {
-                navigation.navigate('ResponderDashboard');
-              } else {
-                navigation.navigate('BecomeResponder');
-              }
-            }}
-          >
-            <Text style={styles.actionButtonEmoji}>🤝</Text>
-            <Text style={styles.actionButtonText}>
-              {authState.user?.is_responder ? 'Responder Dashboard' : 'Become Responder'}
-            </Text>
-          </TouchableOpacity>
-        )}
+        {/* Become Responder Link */}
+        <TouchableOpacity 
+          style={styles.gridCard} 
+          onPress={() => navigation.navigate('BecomeResponder')}
+        >
+          <Text style={styles.gridEmoji}>🚑</Text>
+          <Text style={styles.gridTitle}>Join Responders</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Sign Out */}
-      <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
-        <Text style={styles.signOutButtonText}>Sign Out</Text>
-      </TouchableOpacity>
     </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  contentContainer: {
-    paddingHorizontal: 15,
-    paddingVertical: 20,
-  },
+  container: { flex: 1, backgroundColor: '#f8f9fa' },
+  contentContainer: { padding: 20, paddingBottom: 40 },
+  
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
-    paddingTop: 10,
-  },
-  greeting: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  subheading: {
-    fontSize: 14,
-    color: '#999',
-    marginTop: 4,
-  },
-  profileButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#e74c3c',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  profileInitial: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  locationCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 15,
+    marginTop: 20,
     marginBottom: 15,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
   },
-  locationTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
+  welcomeText: { fontSize: 16, color: '#666' },
+  userName: { fontSize: 24, fontWeight: 'bold', color: '#333' },
+  profileButton: {
+    width: 45, height: 45, borderRadius: 25,
+    backgroundColor: '#e9ecef', justifyContent: 'center', alignItems: 'center',
   },
-  locationCoords: {
-    fontSize: 12,
-    color: '#666',
-    fontFamily: 'monospace',
+  profileInitials: { fontSize: 18, fontWeight: 'bold', color: '#333' },
+
+  locationBadge: {
+    backgroundColor: '#e8f5e9', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20,
+    alignSelf: 'flex-start', marginBottom: 40,
+    borderWidth: 1, borderColor: '#c8e6c9'
   },
-  refreshLink: {
-    color: '#e74c3c',
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 8,
-  },
+  locationText: { color: '#2e7d32', fontWeight: '600', fontSize: 12 },
+
+  // SOS Button Styles
   sosContainer: {
-    alignItems: 'center',
-    marginVertical: 30,
+    alignItems: 'center', justifyContent: 'center',
+    height: 250, marginBottom: 30,
+  },
+  pulseCircle: {
+    position: 'absolute', width: 230, height: 230,
+    borderRadius: 115, backgroundColor: 'rgba(231, 76, 60, 0.15)',
   },
   sosButton: {
-    width: 150,
-    height: 150,
-    borderRadius: 75,
+    width: 180, height: 180, borderRadius: 90,
     backgroundColor: '#e74c3c',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#e74c3c',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 10,
+    justifyContent: 'center', alignItems: 'center',
+    elevation: 10, shadowColor: '#e74c3c', shadowOpacity: 0.4, shadowRadius: 10,
+    borderWidth: 4, borderColor: '#fff',
   },
-  sosButtonDisabled: {
-    opacity: 0.6,
+  sosText: { fontSize: 42, fontWeight: '900', color: '#fff', letterSpacing: 2 },
+  sosSubtext: { fontSize: 14, color: 'rgba(255,255,255,0.9)', fontWeight: '600', marginTop: 5 },
+
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 15 },
+
+  // Track Card Styles
+  trackCard: {
+    backgroundColor: '#fff', borderRadius: 16, padding: 15,
+    flexDirection: 'row', alignItems: 'center',
+    marginBottom: 25, elevation: 2, shadowColor: '#000', shadowOpacity: 0.05,
   },
-  sosText: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#fff',
+  iconCircle: {
+    width: 50, height: 50, borderRadius: 25,
+    backgroundColor: '#e3f2fd', justifyContent: 'center', alignItems: 'center',
+    marginRight: 15,
   },
-  sosSubtext: {
-    fontSize: 12,
-    color: '#fff',
-    marginTop: 4,
+  iconEmoji: { fontSize: 24 },
+  cardContent: { flex: 1 },
+  cardTitle: { fontSize: 16, fontWeight: 'bold', color: '#333' },
+  cardDesc: { fontSize: 12, color: '#666', marginTop: 2 },
+  arrow: { fontSize: 20, color: '#ccc', fontWeight: 'bold' },
+
+  // Grid Styles
+  grid: { flexDirection: 'row', justifyContent: 'space-between' },
+  gridCard: {
+    backgroundColor: '#fff', width: '48%', padding: 20,
+    borderRadius: 16, alignItems: 'center',
+    elevation: 2, shadowColor: '#000', shadowOpacity: 0.05,
   },
-  ongoingCard: {
-    backgroundColor: '#fff3cd',
-    borderRadius: 12,
-    padding: 15,
-    marginBottom: 20,
-    borderLeftWidth: 4,
-    borderLeftColor: '#ffc107',
-  },
-  emergencyTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#856404',
-    marginBottom: 8,
-  },
-  emergencyType: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 12,
-  },
-  trackButton: {
-    backgroundColor: '#e74c3c',
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  trackButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingVertical: 30,
-    paddingHorizontal: 20,
-    paddingBottom: 40,
-  },
-  modalTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 8,
-  },
-  modalSubtitle: {
-    fontSize: 14,
-    color: '#999',
-    marginBottom: 20,
-  },
-  emergencyTypesList: {
-    marginBottom: 20,
-  },
-  typeButton: {
-    backgroundColor: '#f5f5f5',
-    paddingVertical: 15,
-    paddingHorizontal: 15,
-    borderRadius: 8,
-    marginBottom: 10,
-    borderWidth: 2,
-    borderColor: '#ddd',
-  },
-  typeButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
-  cancelButton: {
-    backgroundColor: '#ddd',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
-  historyContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 15,
-    marginBottom: 20,
-  },
-  historyTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 12,
-  },
-  emergencyItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  emergencyItemLeft: {
-    flex: 1,
-  },
-  emergencyItemType: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-  },
-  emergencyItemDate: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 4,
-  },
-  emergencyItemStatus: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-  },
-  statusResolved: {
-    backgroundColor: '#d4edda',
-  },
-  statusProgress: {
-    backgroundColor: '#fff3cd',
-  },
-  statusPending: {
-    backgroundColor: '#f8d7da',
-  },
-  emergencyItemStatusText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#333',
-  },
-  viewAllButton: {
-    paddingVertical: 10,
-    marginTop: 10,
-  },
-  viewAllButtonText: {
-    color: '#e74c3c',
-    textAlign: 'center',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  actionsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  actionButton: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 15,
-    alignItems: 'center',
-    marginHorizontal: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  actionButtonEmoji: {
-    fontSize: 32,
-    marginBottom: 8,
-  },
-  actionButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#333',
-    textAlign: 'center',
-  },
-  signOutButton: {
-    backgroundColor: '#ddd',
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  signOutButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#333',
-  },
+  gridEmoji: { fontSize: 32, marginBottom: 10 },
+  gridTitle: { fontSize: 14, fontWeight: '600', color: '#333', textAlign: 'center' },
 });
