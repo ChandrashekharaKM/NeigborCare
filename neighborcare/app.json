@@ -8,9 +8,15 @@
     "scheme": "neighborcare",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "owner": "chandugowdasagar",
+    
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "This app uses your location to find nearby emergency responders and hospitals."
+      }
     },
+    
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -19,12 +25,19 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.chandugowdasagar.neighborcare",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
     },
+    
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
+    
     "plugins": [
       "expo-router",
       [
@@ -38,18 +51,25 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow NeighborCare to use your location."
+        }
       ]
     ],
+    
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
+    
     "extra": {
       "router": {},
       "eas": {
         "projectId": "01f4e3f9-2f6a-466c-a865-9638e29eb7af"
       }
-    },
-    "owner": "chandugowdasagar"
+    }
   }
 }

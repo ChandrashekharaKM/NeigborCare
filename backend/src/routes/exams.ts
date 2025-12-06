@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { users, findUserById } from '../data/store';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -10,15 +9,15 @@ router.post('/submit', async (req: Request, res: Response) => {
   try {
     const { userId, examId, score, totalQuestions, correctAnswers, answers, passed, location } = req.body;
 
-    console.log(`📝 Exam Submission for ${userId}: Score ${score}% (${passed ? 'PASS' : 'FAIL'})`);
+    console.log(`📝 Exam Submission for ${userId}: ${passed ? 'PASSED' : 'FAILED'}`);
 
     // --- 1. DEVELOPER BYPASS LOGIC ---
     if (examId === 'dev_bypass') {
       console.log('🔓 EXECUTING DEVELOPER BYPASS');
 
-      // Try to update via Prisma if DB is available, otherwise fall back to in-memory store
       try {
-        await prisma.user.update({
+        // Attempt to update the user in the database
+        const updatedUser = await prisma.user.update({
           where: { id: userId },
           data: {
             is_responder: true,
@@ -27,109 +26,75 @@ router.post('/submit', async (req: Request, res: Response) => {
             is_available: true,
             exam_score: 100,
             exam_completed_at: new Date(),
-          }
+          },
         });
 
-        return res.status(200).json({ message: 'Bypass Successful. You are now a Responder.' });
-      } catch (dbErr) {
-        console.warn('Prisma update failed, falling back to in-memory store for bypass:', String(dbErr));
+        console.log(`✅ User ${updatedUser.name} is now a Responder (Bypass Success)`);
+        return res.status(200).json({ message: 'Bypass Successful', user: updatedUser });
 
-        const user = findUserById(userId);
-        if (user) {
-          user.is_responder = true;
-          user.exam_passed = true;
-          user.is_certified = true;
-          user.is_available = true;
-          user.exam_score = 100;
-          user.exam_completed_at = new Date().toISOString();
-
-          console.log(`Bypass applied to in-memory user: ${userId}`);
-          return res.status(200).json({ message: 'Bypass Successful (in-memory). You are now a Responder.' });
+      } catch (error: any) {
+        console.error("❌ Bypass Error:", error.code);
+        
+        // P2025 means "Record to update not found."
+        if (error.code === 'P2025') {
+          return res.status(404).json({ error: 'User ID not found in Database. Please Sign Out and Register again.' });
         }
-
-        // If user not found even in memory, still return success but warn
-        console.warn('User not found in in-memory store for bypass:', userId);
-        return res.status(200).json({ message: 'Bypass applied, but user record not found locally.' });
+        
+        return res.status(500).json({ error: 'Database update failed.' });
       }
     }
 
-    // --- 2. NORMAL EXAM LOGIC ---
+    // --- 2. STANDARD EXAM LOGIC ---
     
-    // --- Ensure exam exists in DB if possible ---
-    let exam = null;
-    try {
-      exam = await prisma.exam.findUnique({ where: { id: examId } });
-
-      if (!exam) {
-        exam = await prisma.exam.create({
-          data: {
-            id: examId,
-            title: "Community Responder Certification",
-            questions: JSON.stringify([]),
-            passing_score: 80,
-          }
-        });
-      }
-    } catch (e) {
-      console.warn('Prisma unavailable or exam create/find failed, continuing without DB:', String(e));
-      exam = null;
-    }
-
-    // Create the result record (attempt DB write, but don't fail if DB is unavailable)
-    try {
-      await prisma.examResult.create({
+    // Ensure exam exists
+    let exam = await prisma.exam.findUnique({ where: { id: examId } });
+    if (!exam) {
+      exam = await prisma.exam.create({
         data: {
-          user_id: userId,
-          exam_id: examId,
-          score: score,
-          total_questions: totalQuestions,
-          correct_answers: correctAnswers,
-          answers: answers, // Prisma `Json` accepts JS object/array
-          passed: passed,
-          location_lat: location?.latitude || null,
-          location_lng: location?.longitude || null,
-          started_at: new Date(),
-          submitted_at: new Date(),
+          id: examId,
+          title: "Community Responder Certification",
+          questions: "[]",
+          passing_score: 80,
         }
       });
-    } catch (e) {
-      console.warn('Failed to persist exam result to DB, continuing in-memory only:', String(e));
     }
 
-    // Update User Profile if they passed (try DB, fall back to in-memory)
-    if (passed) {
-      try {
-        await prisma.user.update({
-          where: { id: userId },
-          data: {
-            is_responder: true,
-            exam_passed: true,
-            is_certified: true,
-            is_available: true,
-            exam_score: score,
-            exam_completed_at: new Date(),
-          }
-        });
-      } catch (e) {
-        console.warn('Prisma user update failed, updating in-memory user instead:', String(e));
-        const user = findUserById(userId);
-        if (user) {
-          user.is_responder = true;
-          user.exam_passed = true;
-          user.is_certified = true;
-          user.is_available = true;
-          user.exam_score = score;
-          user.exam_completed_at = new Date().toISOString();
-        } else {
-          console.warn('User not found in in-memory store during exam pass update:', userId);
-        }
+    // Create Result
+    await prisma.examResult.create({
+      data: {
+        user_id: userId,
+        exam_id: examId,
+        score: score,
+        total_questions: totalQuestions,
+        correct_answers: correctAnswers,
+        answers: JSON.stringify(answers),
+        passed: passed,
+        location_lat: location?.latitude || null,
+        location_lng: location?.longitude || null,
+        started_at: new Date(),
+        submitted_at: new Date(),
       }
+    });
+
+    // Update User Profile
+    if (passed) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          is_responder: true,
+          exam_passed: true,
+          is_certified: true,
+          is_available: true,
+          exam_score: score,
+          exam_completed_at: new Date(),
+        }
+      });
     }
 
     res.status(200).json({ success: true, message: passed ? 'Exam Passed' : 'Exam Failed' });
 
   } catch (error) {
-    console.error("Exam Submit Error:", error);
+    console.error("❌ Exam Submit Error:", error);
     res.status(500).json({ error: 'Failed to submit exam' });
   }
 });
@@ -142,7 +107,7 @@ router.get('/:examId', async (req: Request, res: Response) => {
           id: req.params.examId,
           title: 'Responder Exam',
           questions: [], 
-          passingScore: 80, // Frontend expects camelCase here, this is just JSON response
+          passingScore: 80,
           duration: 30,
         },
       });

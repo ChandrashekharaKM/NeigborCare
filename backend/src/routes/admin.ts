@@ -1,62 +1,82 @@
 import { Router, Request, Response } from 'express';
-import { users, deleteUserById } from '../data/store'; // <--- IMPORT SHARED STORE
+import { PrismaClient } from '@prisma/client';
 
 const router = Router();
+const prisma = new PrismaClient();
 
 // GET /api/admin/users
+// Fetch all regular users
 router.get('/users', async (req: Request, res: Response) => {
   try {
-    console.log('Admin fetching users. Total in DB:', users.length);
-    // Filter for Regular Users
-    const regularUsers = users.filter(u => !u.is_responder && !u.is_admin);
-    res.json({ users: regularUsers });
+    const users = await prisma.user.findMany({
+      where: {
+        is_responder: false,
+        is_admin: false
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone_number: true,
+        created_at: true
+      },
+      orderBy: { created_at: 'desc' }
+    });
+    
+    // Frontend expects { users: [...] }
+    res.json({ users });
   } catch (error) {
+    console.error("Error fetching users:", error);
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
 
 // GET /api/admin/responders
+// Fetch all responders
 router.get('/responders', async (req: Request, res: Response) => {
   try {
-    // Filter for Responders
-    const responders = users.filter(u => u.is_responder);
+    const responders = await prisma.user.findMany({
+      where: {
+        is_responder: true
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone_number: true,
+        is_certified: true,
+        exam_passed: true,
+        created_at: true
+      },
+      orderBy: { created_at: 'desc' }
+    });
+
+    // Frontend expects { responders: [...] }
     res.json({ responders });
   } catch (error) {
+    console.error("Error fetching responders:", error);
     res.status(500).json({ error: 'Failed to fetch responders' });
   }
 });
 
-// POST /api/admin/responders/:userId/approve
-router.post('/responders/:userId/approve', async (req: Request, res: Response) => {
+// POST /api/admin/approve-responder/:id
+// Manually approve a responder
+router.post('/approve-responder/:id', async (req: Request, res: Response) => {
   try {
-    const { userId } = req.params;
-    const user = users.find(u => u.id === userId);
+    const { id } = req.params;
     
-    if (user) {
-        user.is_certified = true;
-        user.exam_passed = true;
-        res.json({ message: 'Approved', userId });
-    } else {
-        res.status(404).json({ error: 'User not found' });
-    }
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to approve' });
-  }
-});
+    await prisma.user.update({
+      where: { id },
+      data: {
+        is_certified: true,
+        is_available: true
+      }
+    });
 
-// DELETE /api/admin/users/:userId
-router.delete('/users/:userId', async (req: Request, res: Response) => {
-  try {
-    const { userId } = req.params;
-    const deleted = deleteUserById(userId);
-    
-    if (deleted) {
-        res.json({ message: 'Deleted successfully', userId });
-    } else {
-        res.status(404).json({ error: 'User not found' });
-    }
+    res.json({ message: 'Responder approved successfully' });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to delete' });
+    console.error("Error approving responder:", error);
+    res.status(500).json({ error: 'Failed to approve responder' });
   }
 });
 

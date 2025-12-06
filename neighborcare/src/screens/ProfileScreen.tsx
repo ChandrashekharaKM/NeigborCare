@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,33 +8,29 @@ import {
   ActivityIndicator,
   Alert,
   Switch,
-  Platform,
   StatusBar,
   Dimensions,
-  Linking
+  Linking,
+  Platform,
+  RefreshControl,
+  Image
 } from 'react-native';
 import { FontAwesome5, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import apiService from '../services/api';
-
-// IMPORT NOTIFICATION SERVICE
 import { registerForPushNotificationsAsync } from '../services/NotificationService';
 
 const { width } = Dimensions.get('window');
 
-interface ProfileScreenProps {
-  navigation: any;
-}
-
-export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
+export const ProfileScreen: React.FC<any> = ({ navigation }) => {
   const { state: authState, authContext } = useAuth();
   const [userProfile, setUserProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   
-  // Feature Toggles
+  // Feature State
   const [isResponder, setIsResponder] = useState(false);
-  const [isAvailable, setIsAvailable] = useState(true); 
-  const [pushEnabled, setPushEnabled] = useState(false); // State for push notification switch
+  const [pushEnabled, setPushEnabled] = useState(false); 
 
   useEffect(() => {
     loadProfile();
@@ -43,86 +39,79 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
   const loadProfile = async () => {
     try {
       if (authState.user) {
-        console.log("Auth User ID:", authState.user.id);
-        const profile = await apiService.getUserProfile(authState.user.id);
-        console.log("Backend Profile Data:", profile); 
-
-        setUserProfile(profile);
-        setIsResponder(profile.is_responder || authState.user.role === 'responder');
+        // 1. Initial check from Local Auth (Fast)
+        const localIsResponder = authState.user.is_responder || false;
+        setIsResponder(localIsResponder);
         
-        // TODO: In a real app, check if push token exists on backend to set initial 'pushEnabled' state
+        // 2. Fetch fresh data from Server (Authoritative)
+        try {
+          const profile = await apiService.getUserProfile(authState.user.id);
+          if (profile) {
+            setUserProfile(profile);
+            
+            // If server says we are a responder, update the UI immediately
+            if (profile.is_responder === true) {
+              setIsResponder(true);
+            }
+          }
+        } catch (err) {
+          console.log("Using cached Auth Data.");
+        }
       }
-    } catch (error) {
-      console.log('Error loading profile, falling back to Auth Data');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const handleSignOut = async () => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sign Out',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await authContext.signOut();
-            } catch (error) {
-              Alert.alert('Error', 'Failed to sign out');
-            }
-          },
-        },
-      ]
-    );
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadProfile();
+  }, []);
+
+  const handleSignOut = () => {
+    Alert.alert('Sign Out', 'Are you sure?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign Out', style: 'destructive', onPress: () => authContext.signOut() }
+    ]);
   };
 
-  // --- NOTIFICATION LOGIC ---
   const handleToggleNotifications = async (value: boolean) => {
     setPushEnabled(value);
     if (value) {
-      try {
-        const token = await registerForPushNotificationsAsync();
-        if (token) {
-          Alert.alert("Success", "Push Notifications Enabled!");
-          console.log("Device Token:", token);
-          // TODO: Call API to save token to user profile
-          // await apiService.updatePushToken(authState.user.id, token);
-        } else {
-          setPushEnabled(false); // Revert if failed or cancelled
-          Alert.alert("Permission Required", "Please enable notifications in your phone settings.");
-        }
-      } catch (error) {
-        console.error("Notification Error:", error);
-        setPushEnabled(false);
-      }
+      const token = await registerForPushNotificationsAsync();
+      if (token) Alert.alert("Success", "Push Enabled");
+      else setPushEnabled(false);
     }
   };
 
+  // --- FIXED DATA HELPERS (Prioritize Auth State) ---
   const getDisplayName = () => {
-    if (userProfile?.name) return userProfile.name;
+    // 1. Check Auth State FIRST (Correct Data)
     if (authState.user?.name) return authState.user.name;
-    if (authState.user?.fullName) return authState.user.fullName;
+    // 2. Fallback to API Profile
+    if (userProfile?.name) return userProfile.name;
+    // 3. Fallback
     return "Neighbor User";
   };
 
   const getDisplayPhone = () => {
+    // 1. Check Auth State FIRST (Correct Data)
+    if (authState.user?.phone_number) return authState.user.phone_number;
+    if (authState.user?.phone) return authState.user.phone; // Legacy field check
+    
+    // 2. Fallback to API Profile
     if (userProfile?.phone_number) return userProfile.phone_number;
-    if (userProfile?.mobile) return userProfile.mobile;
-    if (authState.user?.phone) return authState.user.phone;
-    if (authState.user?.email) return authState.user.email;
+    
     return "No Contact Info";
   };
 
   const getInitials = () => {
     const name = getDisplayName();
-    return name ? name[0].toUpperCase() : 'U';
+    return name && name.length > 0 ? name[0].toUpperCase() : 'U';
   };
 
-  if (loading) {
+  if (loading && !refreshing) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#DC2626" />
@@ -130,11 +119,131 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
     );
   }
 
+  // ============================================================
+  //  RENDER: RESPONDER PROFILE (RED THEME)
+  // ============================================================
+  if (isResponder) {
+    return (
+      <View style={styles.mainContainer}>
+        <StatusBar barStyle="light-content" backgroundColor="#DC2626" />
+        
+        {/* HEADER (RED) */}
+        <View style={styles.headerContainer}>
+          <View style={styles.headerContent}>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color="#fff" />
+            </TouchableOpacity>
+            
+            <Text style={styles.headerTitle}>Responder Profile</Text>
+            
+            <TouchableOpacity onPress={() => Alert.alert("Edit", "Coming soon")}>
+               <Ionicons name="create-outline" size={24} color="#fff" />
+            </TouchableOpacity>
+          </View>
+
+          {/* RESPONDER ID CARD */}
+          <View style={styles.responderIdCard}>
+            <View style={styles.idRow}>
+              <View style={styles.avatarRed}>
+                 <Text style={[styles.avatarText, { color: '#DC2626' }]}>{getInitials()}</Text>
+              </View>
+              <View style={{flex: 1}}>
+                <Text style={styles.idName}>{getDisplayName()}</Text>
+                <Text style={styles.idRole}>VERIFIED RESPONDER</Text>
+                <Text style={styles.idPhone}>{getDisplayPhone()}</Text>
+              </View>
+              <MaterialCommunityIcons name="shield-check" size={40} color="#DC2626" />
+            </View>
+            
+            <View style={styles.idDivider} />
+            
+            <View style={styles.idStatsRow}>
+               <View style={styles.idStat}>
+                 <Text style={styles.idStatVal}>{userProfile?.successful_responses || 0}</Text>
+                 <Text style={styles.idStatLabel}>MISSIONS</Text>
+               </View>
+               <View style={styles.idStat}>
+                 <Text style={styles.idStatVal}>5.0</Text>
+                 <Text style={styles.idStatLabel}>RATING</Text>
+               </View>
+               <View style={styles.idStat}>
+                 <Text style={styles.idStatVal}>Active</Text>
+                 <Text style={styles.idStatLabel}>STATUS</Text>
+               </View>
+            </View>
+          </View>
+        </View>
+
+        <ScrollView 
+          contentContainerStyle={styles.scrollContentResponder}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#DC2626" />}
+        >
+          
+          {/* CERTIFICATIONS (Red Accents) */}
+          <Text style={styles.sectionHeader}>Certifications</Text>
+          <View style={styles.certCard}>
+             <View style={styles.certRow}>
+                <View style={[styles.iconBox, { backgroundColor: '#FEE2E2' }]}>
+                   <FontAwesome5 name="first-aid" size={18} color="#DC2626" />
+                </View>
+                <View style={{flex: 1}}>
+                   <Text style={styles.certTitle}>Basic Life Support (BLS)</Text>
+                   <Text style={styles.certSub}>Verified • Expires 2026</Text>
+                </View>
+                <Ionicons name="checkmark-circle" size={22} color="#16A34A" />
+             </View>
+             <View style={[styles.certRow, { marginTop: 15 }]}>
+                <View style={[styles.iconBox, { backgroundColor: '#FEE2E2' }]}>
+                   <FontAwesome5 name="heartbeat" size={18} color="#DC2626" />
+                </View>
+                <View style={{flex: 1}}>
+                   <Text style={styles.certTitle}>CPR / AED Level 2</Text>
+                   <Text style={styles.certSub}>Verified • Expires 2025</Text>
+                </View>
+                <Ionicons name="checkmark-circle" size={22} color="#16A34A" />
+             </View>
+          </View>
+
+          {/* SETTINGS */}
+          <Text style={styles.sectionHeader}>Account & Settings</Text>
+          <View style={styles.settingsCard}>
+             <TouchableOpacity style={styles.settingRow} onPress={() => navigation.navigate('PrivacySecurity')}>
+                <View style={styles.settingLeft}>
+                    <Ionicons name="shield-outline" size={20} color="#334155" />
+                    <Text style={[styles.settingText, {marginLeft: 10}]}>Security & Privacy</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
+             </TouchableOpacity>
+             
+             <View style={styles.divider} />
+
+             <TouchableOpacity style={styles.settingRow} onPress={() => navigation.navigate('HelpSupport')}>
+                <View style={styles.settingLeft}>
+                    <Ionicons name="help-circle-outline" size={20} color="#334155" />
+                    <Text style={[styles.settingText, {marginLeft: 10}]}>Responder Support</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
+             </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
+             <Text style={styles.signOutText}>Sign Out</Text>
+          </TouchableOpacity>
+
+          <View style={{height: 40}} />
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // ============================================================
+  //  RENDER: USER PROFILE (Red Theme)
+  // ============================================================
   return (
     <View style={styles.mainContainer}>
-      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <StatusBar barStyle="light-content" backgroundColor="#DC2626" />
 
-      {/* ================= HEADER ================= */}
+      {/* RED HEADER */}
       <View style={styles.headerContainer}>
         <View style={styles.headerContent}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
@@ -143,130 +252,75 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
           
           <Text style={styles.headerTitle}>My Profile</Text>
           
-          <TouchableOpacity onPress={() => Alert.alert("Edit", "Edit Profile coming soon")}>
+          <TouchableOpacity onPress={() => Alert.alert("Edit", "Coming soon")}>
              <Ionicons name="create-outline" size={24} color="#fff" />
           </TouchableOpacity>
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        contentContainerStyle={styles.scrollContent} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#DC2626" />}
+      >
         
-        {/* ================= PROFILE CARD ================= */}
+        {/* USER CARD */}
         <View style={styles.profileCard}>
           <View style={styles.avatarContainer}>
              <View style={styles.avatar}>
                <Text style={styles.avatarText}>{getInitials()}</Text>
              </View>
-             {isResponder && (
-               <View style={styles.badgeIcon}>
-                 <MaterialCommunityIcons name="shield-check" size={20} color="#fff" />
-               </View>
-             )}
           </View>
-
           <Text style={styles.profileName}>{getDisplayName()}</Text>
           <Text style={styles.profilePhone}>{getDisplayPhone()}</Text>
-
-          <View style={[styles.roleBadge, { backgroundColor: isResponder ? '#DC2626' : '#2563EB' }]}>
-            <Text style={styles.roleText}>
-              {isResponder ? 'CERTIFIED RESPONDER' : 'COMMUNITY MEMBER'}
-            </Text>
+          <View style={styles.roleBadge}>
+            <Text style={styles.roleText}>COMMUNITY MEMBER</Text>
           </View>
         </View>
 
-        {/* ================= USER DATA SECTIONS ================= */}
-        {isResponder ? (
-          <View style={styles.sectionContainer}>
-             <Text style={styles.sectionHeader}>🚑 Responder Dashboard</Text>
-             
-             <View style={styles.actionRow}>
-                <View style={{flexDirection:'row', alignItems:'center'}}>
-                   <View style={[styles.iconBox, { backgroundColor: isAvailable ? '#DCFCE7' : '#F1F5F9' }]}>
-                      <FontAwesome5 name="power-off" size={18} color={isAvailable ? '#16A34A' : '#64748B'} />
-                   </View>
-                   <View style={{marginLeft: 12}}>
-                     <Text style={styles.rowTitle}>Available for SOS</Text>
-                     <Text style={styles.rowSub}>Receive nearby alerts</Text>
-                   </View>
-                </View>
-                <Switch 
-                  value={isAvailable} 
-                  onValueChange={setIsAvailable} 
-                  trackColor={{false: '#E2E8F0', true: '#DC2626'}}
-                  thumbColor="#fff"
-                />
-             </View>
-
-             <View style={styles.statsGrid}>
-                <View style={styles.statBox}>
-                   <Text style={styles.statNum}>{userProfile?.successful_responses || 0}</Text>
-                   <Text style={styles.statLabel}>Responded</Text>
-                </View>
-                <View style={styles.statBox}>
-                   <Text style={styles.statNum}>{userProfile?.total_lives_helped || 0}</Text>
-                   <Text style={styles.statLabel}>Lives Helped</Text>
-                </View>
-                <View style={styles.statBox}>
-                   <Text style={styles.statNum}>5.0</Text>
-                   <Text style={styles.statLabel}>Rating</Text>
-                </View>
-             </View>
-          </View>
-        ) : (
-          <View style={styles.sectionContainer}>
-            <Text style={styles.sectionHeader}>🏥 Medical ID (Critical)</Text>
-            
-            <View style={styles.medicalRow}>
-               <View style={styles.medicalItem}>
-                  <Text style={styles.medLabel}>Blood Type</Text>
-                  <Text style={styles.medValue}>{userProfile?.blood_type || '--'}</Text>
-               </View>
-               <View style={styles.medicalDivider} />
-               <View style={styles.medicalItem}>
-                  <Text style={styles.medLabel}>Allergies</Text>
-                  <Text style={styles.medValue}>{userProfile?.allergies || 'None'}</Text>
-               </View>
-               <View style={styles.medicalDivider} />
-               <View style={styles.medicalItem}>
-                  <Text style={styles.medLabel}>Age</Text>
-                  <Text style={styles.medValue}>{userProfile?.age || '--'}</Text>
-               </View>
-            </View>
-
-            <TouchableOpacity 
-              style={styles.actionButtonOutline}
-              onPress={() => navigation.navigate('MedicalRecords')}
-            >
-               <Text style={styles.actionBtnText}>Update Medical Records</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* ================= SETTINGS ================= */}
+        {/* MEDICAL ID */}
         <View style={styles.sectionContainer}>
-          <Text style={styles.sectionHeader}>⚙️ Account Settings</Text>
-
-          {/* Emergency Contacts */}
+          <Text style={styles.sectionHeader}>🏥 Medical ID (Critical)</Text>
+          <View style={styles.medicalRow}>
+             <View style={styles.medicalItem}>
+                <Text style={styles.medLabel}>Blood Type</Text>
+                <Text style={styles.medValue}>{userProfile?.blood_type || '--'}</Text>
+             </View>
+             <View style={styles.medicalDivider} />
+             <View style={styles.medicalItem}>
+                <Text style={styles.medLabel}>Allergies</Text>
+                <Text style={styles.medValue}>{userProfile?.allergies || 'None'}</Text>
+             </View>
+             <View style={styles.medicalDivider} />
+             <View style={styles.medicalItem}>
+                <Text style={styles.medLabel}>Age</Text>
+                <Text style={styles.medValue}>{userProfile?.age || '--'}</Text>
+             </View>
+          </View>
           <TouchableOpacity 
-            style={styles.settingRow}
-            onPress={() => navigation.navigate('EmergencyContacts')}
+            style={styles.actionButtonOutline}
+            onPress={() => navigation.navigate('MedicalRecords')}
           >
+             <Text style={styles.actionBtnText}>Update Medical Records</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* USER SETTINGS */}
+        <View style={styles.sectionContainer}>
+          <Text style={styles.sectionHeader}>Settings</Text>
+          
+          <TouchableOpacity style={styles.settingRow} onPress={() => navigation.navigate('EmergencyContacts')}>
             <View style={styles.settingLeft}>
-              <View style={[styles.iconBox, {backgroundColor: '#FEF2F2'}]}>
-                <Ionicons name="people" size={20} color="#DC2626" />
-              </View>
-              <Text style={styles.settingText}>Emergency Contacts</Text>
+               <Ionicons name="people" size={20} color="#DC2626" />
+               <Text style={[styles.settingText, {marginLeft: 10}]}>Emergency Contacts</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
           </TouchableOpacity>
 
-          {/* Notifications */}
           <View style={styles.settingRow}>
             <View style={styles.settingLeft}>
-              <View style={[styles.iconBox, {backgroundColor: '#F0F9FF'}]}>
-                <Ionicons name="notifications" size={20} color="#0284C7" />
-              </View>
-              <Text style={styles.settingText}>Push Notifications</Text>
+               <Ionicons name="notifications" size={20} color="#0284C7" />
+               <Text style={[styles.settingText, {marginLeft: 10}]}>Push Notifications</Text>
             </View>
             <Switch 
               value={pushEnabled} 
@@ -276,58 +330,28 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation }) => {
             />
           </View>
 
-          {/* Privacy */}
-          <TouchableOpacity 
-            style={styles.settingRow}
-            onPress={() => navigation.navigate('PrivacySecurity')}
-          >
+          <TouchableOpacity style={styles.settingRow} onPress={() => navigation.navigate('PrivacySecurity')}>
             <View style={styles.settingLeft}>
-              <View style={[styles.iconBox, {backgroundColor: '#FDF4FF'}]}>
-                <Ionicons name="lock-closed" size={20} color="#9333EA" />
-              </View>
-              <Text style={styles.settingText}>Privacy & Security</Text>
+               <Ionicons name="lock-closed" size={20} color="#9333EA" />
+               <Text style={[styles.settingText, {marginLeft: 10}]}>Privacy & Security</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
           </TouchableOpacity>
 
-           {/* Help */}
-           <TouchableOpacity 
-             style={styles.settingRow}
-             onPress={() => navigation.navigate('HelpSupport')}
-           >
+           <TouchableOpacity style={styles.settingRow} onPress={() => navigation.navigate('HelpSupport')}>
             <View style={styles.settingLeft}>
-              <View style={[styles.iconBox, {backgroundColor: '#FFFBEB'}]}>
-                <Ionicons name="help-circle" size={20} color="#D97706" />
-              </View>
-              <Text style={styles.settingText}>Help & Support</Text>
+               <Ionicons name="help-circle" size={20} color="#D97706" />
+               <Text style={[styles.settingText, {marginLeft: 10}]}>Help & Support</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
           </TouchableOpacity>
         </View>
 
-        {/* Sign Out */}
         <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
            <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
 
-        {/* Version */}
-        <View style={styles.versionContainer}>
-          <Text style={styles.versionText}>NeighborCare v1.0.2</Text>
-        </View>
-
       </ScrollView>
-
-      {/* ================= FOOTER ================= */}
-      <View style={[styles.footer, { backgroundColor: '#DC2626' }]}>
-        <TouchableOpacity onPress={() => Linking.openURL('tel:108')}>
-          <Text style={styles.footerLink}>Call Ambulance (108)</Text>
-        </TouchableOpacity>
-        <Text style={styles.footerDivider}>|</Text>
-        <TouchableOpacity onPress={() => Linking.openURL('tel:100')}>
-          <Text style={styles.footerLink}>Police (100)</Text>
-        </TouchableOpacity>
-      </View>
-
     </View>
   );
 };
@@ -336,8 +360,9 @@ const styles = StyleSheet.create({
   mainContainer: { flex: 1, backgroundColor: '#F8FAFC' },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
+  // --- COMMON HEADER ---
   headerContainer: {
-    backgroundColor: '#DC2626',
+    backgroundColor: '#DC2626', // Overwritten for Responder
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 50,
     paddingBottom: 20, paddingHorizontal: 20,
     borderBottomLeftRadius: 0, borderBottomRightRadius: 0,
@@ -348,7 +373,9 @@ const styles = StyleSheet.create({
   backButton: { padding: 4 },
 
   scrollContent: { padding: 20, paddingBottom: 80 },
+  scrollContentResponder: { padding: 20, paddingTop: 100 }, 
 
+  // --- USER PROFILE STYLES ---
   profileCard: {
     backgroundColor: '#fff', borderRadius: 20, padding: 20, alignItems: 'center',
     marginBottom: 20, elevation: 4, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10
@@ -359,22 +386,44 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', borderWidth: 4, borderColor: '#fff', elevation: 2
   },
   avatarText: { fontSize: 36, fontWeight: '800', color: '#334155' },
-  badgeIcon: {
-    position: 'absolute', bottom: 0, right: 0, backgroundColor: '#DC2626',
-    width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center',
-    borderWidth: 2, borderColor: '#fff'
-  },
   profileName: { fontSize: 22, fontWeight: '700', color: '#1E293B', marginBottom: 2 },
   profilePhone: { fontSize: 14, color: '#64748B', marginBottom: 12 },
-  roleBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 },
-  roleText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  roleBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#F1F5F9' },
+  roleText: { color: '#64748B', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
 
+  // --- RESPONDER SPECIFIC STYLES ---
+  responderIdCard: {
+    position: 'absolute', top: 90, left: 20, right: 20,
+    backgroundColor: '#fff', borderRadius: 16, padding: 20,
+    elevation: 10, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: {width:0, height: 4}
+  },
+  idRow: { flexDirection: 'row', alignItems: 'center' },
+  avatarRed: {
+    width: 60, height: 60, borderRadius: 30, backgroundColor: '#FEE2E2', // Light Red
+    justifyContent: 'center', alignItems: 'center', marginRight: 15
+  },
+  idName: { fontSize: 18, fontWeight: 'bold', color: '#0F172A' },
+  idRole: { fontSize: 10, fontWeight: '700', color: '#DC2626', letterSpacing: 1, marginTop: 2 },
+  idPhone: { fontSize: 12, color: '#64748B', marginTop: 2 },
+  idDivider: { height: 1, backgroundColor: '#E2E8F0', marginVertical: 15 },
+  idStatsRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  idStat: { alignItems: 'center' },
+  idStatVal: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
+  idStatLabel: { fontSize: 10, color: '#64748B', fontWeight: '600' },
+
+  certCard: { backgroundColor: '#fff', borderRadius: 16, padding: 15, marginBottom: 20, elevation: 2 },
+  certRow: { flexDirection: 'row', alignItems: 'center' },
+  certTitle: { fontSize: 14, fontWeight: '700', color: '#1E293B' },
+  certSub: { fontSize: 12, color: '#64748B' },
+
+  settingsCard: { backgroundColor: '#fff', borderRadius: 16, padding: 5, marginBottom: 20, elevation: 2 },
+  
+  // --- COMMON STYLES ---
   sectionContainer: {
     backgroundColor: '#fff', borderRadius: 20, padding: 20, marginBottom: 20,
     elevation: 2, shadowColor: '#000', shadowOpacity: 0.05
   },
   sectionHeader: { fontSize: 16, fontWeight: '700', color: '#334155', marginBottom: 15 },
-
   medicalRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 },
   medicalItem: { alignItems: 'center', flex: 1 },
   medLabel: { fontSize: 12, color: '#64748B', marginBottom: 4 },
@@ -385,36 +434,16 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginTop: 5
   },
   actionBtnText: { color: '#DC2626', fontWeight: '700', fontSize: 14 },
-
-  actionRow: { 
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', 
-    marginBottom: 20, paddingBottom: 15, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' 
-  },
-  rowTitle: { fontSize: 15, fontWeight: '600', color: '#1E293B' },
-  rowSub: { fontSize: 12, color: '#64748B' },
-  statsGrid: { flexDirection: 'row', justifyContent: 'space-between' },
-  statBox: { alignItems: 'center', flex: 1 },
-  statNum: { fontSize: 20, fontWeight: '800', color: '#DC2626' },
-  statLabel: { fontSize: 11, color: '#64748B', marginTop: 2 },
-
+  
   settingRow: { 
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', 
-    paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F8FAFC' 
+    paddingVertical: 12, paddingHorizontal: 10
   },
   settingLeft: { flexDirection: 'row', alignItems: 'center' },
-  iconBox: { width: 36, height: 36, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
   settingText: { fontSize: 15, fontWeight: '500', color: '#334155' },
+  iconBox: { width: 32, height: 32, borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  divider: { height: 1, backgroundColor: '#F1F5F9', marginHorizontal: 10 },
 
   signOutBtn: { backgroundColor: '#F1F5F9', padding: 16, borderRadius: 16, alignItems: 'center', marginBottom: 20 },
   signOutText: { color: '#EF4444', fontWeight: '700', fontSize: 15 },
-  
-  versionContainer: { alignItems: 'center', marginBottom: 20 },
-  versionText: { color: '#94A3B8', fontSize: 12 },
-
-  footer: { 
-    paddingVertical: 12, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', 
-    position: 'absolute', bottom: 0, left: 0, right: 0 
-  },
-  footerLink: { color: '#fff', fontSize: 12, fontWeight: '700', paddingHorizontal: 12 },
-  footerDivider: { color: 'rgba(255,255,255,0.4)', fontSize: 14 },
 });

@@ -1,19 +1,24 @@
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
-import Constants from 'expo-constants'; // Import this
+import { Platform, Alert } from 'react-native';
+import Constants from 'expo-constants';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
-    shouldPlaySound: true,
+    shouldPlaySound: false,
     shouldSetBadge: false,
   }),
 });
 
 export const registerForPushNotificationsAsync = async () => {
-  let token;
+  // CRITICAL FIX FOR EXPO GO CRASH
+  if (Constants.appOwnership === 'expo' && Platform.OS === 'android') {
+    console.log("⚠️ Push Notifications disabled in Expo Go (Android). Skipping to prevent crash.");
+    return null; 
+  }
 
+  let token;
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('default', {
       name: 'default',
@@ -26,36 +31,21 @@ export const registerForPushNotificationsAsync = async () => {
   if (Device.isDevice) {
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
-    
     if (existingStatus !== 'granted') {
       const { status } = await Notifications.requestPermissionsAsync();
       finalStatus = status;
     }
-    
     if (finalStatus !== 'granted') {
-      alert('Failed to get push token for push notification!');
-      return;
+      return null;
     }
     
-    // --- FIX IS HERE ---
-    // If you haven't run 'eas init', you can paste your Project ID string directly here.
-    // Ideally, getting it from Constants is cleaner if 'eas init' was run.
-    const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-
     try {
-      token = (await Notifications.getExpoPushTokenAsync({
-        projectId: projectId // Pass the ID explicitly if found
-      })).data;
-      console.log("EXPO PUSH TOKEN:", token);
-    } catch (e) {
-      console.error("Error fetching token:", e);
-      alert("Error: Could not get Push Token. Make sure you run 'npx eas init' first.");
+      const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+      const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+      token = tokenData.data;
+    } catch (error) {
+      console.log("Error getting token:", error);
     }
-    // -------------------
-
-  } else {
-    alert('Must use physical device for Push Notifications');
   }
-
   return token;
 };

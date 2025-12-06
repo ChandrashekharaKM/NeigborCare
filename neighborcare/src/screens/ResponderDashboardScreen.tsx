@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,11 +9,27 @@ import {
   Alert,
   Switch,
   FlatList,
+  Platform,
+  StatusBar,
+  Dimensions,
+  Linking
 } from 'react-native';
+import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
+import { FontAwesome5, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Location from 'expo-location';
 import { useAuth } from '../context/AuthContext';
 import apiService from '../services/api';
 import geolocationService from '../services/geolocation';
 import { LocationData } from '../types';
+
+const { width } = Dimensions.get('window');
+
+// Mock Victim for Demo
+const MOCK_VICTIM_LOC = {
+  latitude: 12.972442,
+  longitude: 77.580643,
+  address: "Cubbon Park, Bengaluru"
+};
 
 interface ResponderDashboardScreenProps {
   navigation: any;
@@ -27,6 +43,8 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
   // --- STATE ---
   const [isAvailable, setIsAvailable] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [activeMission, setActiveMission] = useState<any>(null); 
+  
   const [stats, setStats] = useState({
     successful_responses: 0,
     emergency_alerts_received: 0,
@@ -36,37 +54,50 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
   const [location, setLocation] = useState<LocationData | null>(null);
   const [medicalResources, setMedicalResources] = useState<any[]>([]);
   const [resourcesLoading, setResourcesLoading] = useState(false);
-  const [gpsError, setGpsError] = useState<string | null>(null);
+  const [addressText, setAddressText] = useState('Locating...');
+  const mapRef = useRef<MapView>(null);
+  const hasFetchedInitialResources = useRef(false);
 
-  // 1. ON MOUNT: Load Data & Start GPS
+  // 1. ON MOUNT
   useEffect(() => {
     loadResponderStats();
     initializeLocation();
-
-    // Cleanup GPS on unmount
-    return () => {
-      geolocationService.stopLocationTracking();
-    };
+    return () => { geolocationService.stopLocationTracking(); };
   }, []);
 
-  // 2. ON LOCATION CHANGE: Fetch Nearby Hospitals
+  // 2. ON LOCATION CHANGE
   useEffect(() => {
     if (location) {
-      fetchRealNearbyResources(location);
+      fetchAddress(location.latitude, location.longitude);
+      if (!hasFetchedInitialResources.current) {
+        fetchRealNearbyResources(location);
+        hasFetchedInitialResources.current = true;
+      }
     }
   }, [location]);
 
-  // --- HELPER FUNCTIONS ---
+  // --- LOGIC ---
+  const fetchAddress = async (lat: number, lng: number) => {
+    try {
+      const response = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+      if (response.length > 0) {
+        const item = response[0];
+        const street = item.street || item.name;
+        const city = item.city || item.subregion;
+        setAddressText(street && city ? `${street}, ${city}` : city || street || 'Unknown Location');
+      }
+    } catch (error) {
+      setAddressText(`${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+    }
+  };
 
   const initializeLocation = async () => {
     try {
       const hasPermission = await geolocationService.requestLocationPermissions();
       if (!hasPermission) {
-        setGpsError('Permission Denied');
-        Alert.alert('Permission Required', 'Please enable location access.');
+        setAddressText('Permission Denied');
         return;
       }
-
       const currentLoc = await geolocationService.getCurrentLocation();
       if (currentLoc) setLocation(currentLoc);
 
@@ -74,15 +105,15 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
         setLocation(newLoc);
       });
     } catch (error) {
-      setGpsError('GPS Error');
+      setAddressText('GPS Error');
     }
   };
 
   const fetchRealNearbyResources = async (loc: LocationData) => {
+    if (resourcesLoading) return;
     try {
       setResourcesLoading(true);
-      // Fetch real hospitals within 1km
-      const data = await apiService.getNearbyResources(loc.latitude, loc.longitude, 1000);
+      const data = await apiService.getNearbyResources(loc.latitude, loc.longitude, 2000);
       setMedicalResources(data.resources || []);
     } catch (error) {
       console.log('Failed to fetch resources');
@@ -100,13 +131,14 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
           emergency_alerts_received: profile.emergency_alerts_received || 0,
           total_lives_helped: profile.total_lives_helped || 0,
         });
+        if (profile.is_available !== undefined) setIsAvailable(profile.is_available);
       } catch (e) {}
     }
   };
 
   const handleAvailabilityToggle = async (value: boolean) => {
     if (!location) {
-      Alert.alert('Wait', 'Getting GPS location...');
+      Alert.alert('GPS Required', 'Please wait for location signal.');
       return;
     }
     setIsAvailable(value);
@@ -120,162 +152,400 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
           location.longitude
         );
       }
+      if (value) {
+        setTimeout(() => {
+            Alert.alert(
+                "🚨 Emergency Alert!",
+                "Cardiac Arrest reported 800m away. Do you accept?",
+                [
+                    { text: "Decline", style: 'cancel' },
+                    { text: "ACCEPT", onPress: () => startMission() }
+                ]
+            );
+        }, 2000);
+      }
     } catch (error) {
       setIsAvailable(!value);
+      Alert.alert("Error", "Could not update status.");
     } finally {
       setLoading(false);
     }
   };
 
+  const startMission = () => {
+    const missionData = {
+        id: 'mission_1',
+        victimName: 'Rahul Kumar',
+        type: 'Cardiac Arrest',
+        location: MOCK_VICTIM_LOC
+    };
+    
+    setActiveMission(missionData);
+
+    // --- CRITICAL: AUTO ZOOM TO ROUTE ---
+    if (location && mapRef.current) {
+        setTimeout(() => {
+            mapRef.current?.fitToCoordinates([
+                { latitude: location.latitude, longitude: location.longitude },
+                { latitude: missionData.location.latitude, longitude: missionData.location.longitude }
+            ], {
+                edgePadding: { top: 150, right: 50, bottom: 350, left: 50 }, // Padding ensures markers aren't hidden
+                animated: true,
+            });
+        }, 500); // Slight delay to ensure map renders first
+    }
+  };
+
+  const completeMission = () => {
+    Alert.alert("Mission Complete", "Great job! Stats updated.", [
+        { text: "OK", onPress: () => setActiveMission(null) }
+    ]);
+  };
+
+  const openGoogleMaps = () => {
+    if (!activeMission || !location) return;
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${location.latitude},${location.longitude}&destination=${activeMission.location.latitude},${activeMission.location.longitude}&travelmode=driving`;
+    Linking.openURL(url);
+  };
+
   const renderResourceItem = ({ item }: { item: any }) => (
     <View style={styles.resourceCard}>
       <View style={styles.resourceHeader}>
-        <Text style={styles.resourceEmoji}>🏥</Text>
+        <View style={styles.resourceIconBg}>
+           <FontAwesome5 name="hospital" size={16} color="#DC2626" />
+        </View>
         <View style={{flex: 1}}>
           <Text style={styles.resourceName} numberOfLines={1}>{item.name}</Text>
-          <Text style={styles.resourceType}>{item.type.toUpperCase()}</Text>
+          <Text style={styles.resourceType}>{item.type}</Text>
         </View>
       </View>
       <Text style={styles.resourceAddress} numberOfLines={1}>{item.address}</Text>
-      <Text style={styles.resourceDistance}>📍 {item.distance}m away</Text>
+      <View style={styles.distBadge}>
+         <Text style={styles.resourceDistance}>{item.distance}m</Text>
+      </View>
     </View>
   );
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
-      
-      {/* 1. HEADER */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.greeting}>Responder Mode</Text>
-          <Text style={styles.subheading}>Ready to serve, {authState.user?.name}</Text>
-        </View>
-        <TouchableOpacity onPress={() => navigation.navigate('Profile')}>
-          <View style={styles.profileButton}>
-            <Text style={styles.profileInitial}>{authState.user?.name?.[0] || 'R'}</Text>
+    <View style={styles.mainContainer}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+
+      {/* ================= HEADER ================= */}
+      <View style={styles.headerContainer}>
+        <View style={styles.headerContent}>
+          <View style={styles.headerLeft}>
+            <View style={styles.brandingRow}>
+              <View style={styles.logoIconBg}>
+                <FontAwesome5 name="ambulance" size={14} color="#DC2626" />
+              </View>
+              <Text style={styles.appName}>Responder<Text style={styles.appNameBold}>Mode</Text></Text>
+            </View>
+            <View style={styles.locationPill}>
+              <Ionicons name="location" size={12} color="#fff" style={{ marginRight: 4 }} />
+              <Text style={styles.locationText} numberOfLines={1}>{addressText}</Text>
+            </View>
           </View>
+          <TouchableOpacity onPress={() => navigation.navigate('Profile')} style={styles.profileBtn}>
+             <Text style={styles.profileInitials}>{authState.user?.name?.[0].toUpperCase() || 'R'}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* ================= MAIN CONTENT (MAP + DASHBOARD) ================= */}
+      <View style={{flex: 1}}>
+          
+          {/* MAP SECTION */}
+          <View style={styles.mapContainer}>
+            <MapView
+                ref={mapRef}
+                style={styles.map}
+                provider={PROVIDER_DEFAULT}
+                showsUserLocation={true}
+                showsMyLocationButton={false}
+                initialRegion={{
+                latitude: 12.9716, 
+                longitude: 77.5946,
+                latitudeDelta: 0.02,
+                longitudeDelta: 0.02,
+                }}
+            >
+                {activeMission && (
+                    <>
+                        {/* VICTIM MARKER */}
+                        <Marker coordinate={activeMission.location} title="Victim Location">
+                            <View style={styles.victimMarker}>
+                                <FontAwesome5 name="exclamation" size={20} color="#fff" />
+                            </View>
+                        </Marker>
+                        
+                        {/* ROUTE LINE */}
+                        {location && (
+                            <Polyline 
+                                coordinates={[
+                                    { latitude: location.latitude, longitude: location.longitude },
+                                    { latitude: activeMission.location.latitude, longitude: activeMission.location.longitude }
+                                ]}
+                                strokeColor="#DC2626"
+                                strokeWidth={4}
+                                lineDashPattern={[1]}
+                            />
+                        )}
+                    </>
+                )}
+            </MapView>
+          </View>
+
+          {/* DASHBOARD OVERLAY */}
+          <View style={styles.dashboardContainer}>
+            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                
+                {activeMission ? (
+                    /* ACTIVE MISSION CARD */
+                    <View style={styles.missionCard}>
+                        <View style={styles.missionHeader}>
+                            <Text style={styles.missionTitle}>🚑 ACTIVE MISSION</Text>
+                            <Text style={styles.missionTime}>02:14 mins elapsed</Text>
+                        </View>
+                        <View style={styles.missionInfo}>
+                            <View style={{flex:1}}>
+                                <Text style={styles.victimName}>{activeMission.victimName}</Text>
+                                <Text style={styles.victimType}>{activeMission.type}</Text>
+                                <Text style={styles.victimAddress}>{activeMission.location.address}</Text>
+                            </View>
+                            <TouchableOpacity style={styles.navBtn} onPress={openGoogleMaps}>
+                                <FontAwesome5 name="directions" size={24} color="#fff" />
+                            </TouchableOpacity>
+                        </View>
+                        <TouchableOpacity style={styles.completeBtn} onPress={completeMission}>
+                            <Text style={styles.completeBtnText}>REPORT ARRIVAL / COMPLETE</Text>
+                        </TouchableOpacity>
+                    </View>
+                ) : (
+                    /* NORMAL DASHBOARD */
+                    <>
+                        {/* Status Card */}
+                        <View style={styles.statusCard}>
+                            <View style={styles.statusInfo}>
+                                <Text style={styles.statusLabel}>Duty Status</Text>
+                                <View style={styles.statusBadgeRow}>
+                                    <View style={[styles.statusDot, { backgroundColor: isAvailable ? '#22C55E' : '#94A3B8' }]} />
+                                    <Text style={[styles.statusText, { color: isAvailable ? '#15803D' : '#64748B' }]}>
+                                        {isAvailable ? 'Active & Scanning' : 'Offline'}
+                                    </Text>
+                                </View>
+                            </View>
+                            {loading ? (
+                                <ActivityIndicator size="small" color="#DC2626" />
+                            ) : (
+                                <Switch
+                                    value={isAvailable}
+                                    onValueChange={handleAvailabilityToggle}
+                                    trackColor={{ false: '#E2E8F0', true: '#DC2626' }}
+                                    thumbColor={'#fff'}
+                                    style={{ transform: [{ scaleX: 1.1 }, { scaleY: 1.1 }] }}
+                                />
+                            )}
+                        </View>
+
+                        {/* Stats Grid */}
+                        <View style={styles.statsRow}>
+                            <View style={styles.statCard}>
+                                <View style={[styles.statIconBg, { backgroundColor: '#F0F9FF' }]}>
+                                    <MaterialCommunityIcons name="ambulance" size={24} color="#0284C7" />
+                                </View>
+                                <Text style={styles.statValue}>{stats.successful_responses}</Text>
+                                <Text style={styles.statLabel}>Responded</Text>
+                            </View>
+                            <View style={styles.statCard}>
+                                <View style={[styles.statIconBg, { backgroundColor: '#FEF2F2' }]}>
+                                    <MaterialCommunityIcons name="heart-pulse" size={24} color="#DC2626" />
+                                </View>
+                                <Text style={styles.statValue}>{stats.total_lives_helped}</Text>
+                                <Text style={styles.statLabel}>Lives</Text>
+                            </View>
+                            <View style={styles.statCard}>
+                                <View style={[styles.statIconBg, { backgroundColor: '#FFF7ED' }]}>
+                                    <MaterialCommunityIcons name="bell-ring" size={24} color="#EA580C" />
+                                </View>
+                                <Text style={styles.statValue}>{stats.emergency_alerts_received}</Text>
+                                <Text style={styles.statLabel}>Alerts</Text>
+                            </View>
+                        </View>
+
+                        {/* Nearby Facilities */}
+                        <View style={styles.sectionHeaderRow}>
+                            <Text style={styles.sectionHeader}>Nearby Facilities</Text>
+                            {location && (
+                                <TouchableOpacity onPress={() => fetchRealNearbyResources(location)}>
+                                    <Ionicons name="refresh" size={20} color="#64748B" />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+
+                        {resourcesLoading ? (
+                            <ActivityIndicator size="small" color="#DC2626" style={{ marginTop: 10 }} />
+                        ) : medicalResources.length > 0 ? (
+                            <FlatList
+                                data={medicalResources}
+                                renderItem={renderResourceItem}
+                                keyExtractor={(item) => item.id}
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={styles.resourcesList}
+                            />
+                        ) : (
+                            <View style={styles.emptyContainer}>
+                                <Text style={styles.emptyText}>Tap refresh to find nearby hospitals.</Text>
+                            </View>
+                        )}
+
+                        {/* Actions */}
+                        <View style={{marginTop: 20}}>
+                            <Text style={styles.sectionHeader}>Actions</Text>
+                            <TouchableOpacity 
+                                style={styles.actionRow}
+                                onPress={() => navigation.navigate('Home')} 
+                            >
+                                <View style={[styles.actionIcon, { backgroundColor: '#F3E8FF' }]}>
+                                    <FontAwesome5 name="user" size={16} color="#9333EA" />
+                                </View>
+                                <Text style={styles.actionText}>Switch to User View</Text>
+                                <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
+                            </TouchableOpacity>
+                        </View>
+                    </>
+                )}
+                <View style={{height: 100}} />
+            </ScrollView>
+          </View>
+      </View>
+
+      {/* ================= FOOTER ================= */}
+      <View style={[styles.footer, { backgroundColor: '#DC2626' }]}>
+        <TouchableOpacity onPress={() => Linking.openURL('tel:108')}>
+          <Text style={styles.footerLink}>Call Ambulance (108)</Text>
+        </TouchableOpacity>
+        <Text style={styles.footerDivider}>|</Text>
+        <TouchableOpacity onPress={() => Linking.openURL('tel:100')}>
+          <Text style={styles.footerLink}>Police (100)</Text>
         </TouchableOpacity>
       </View>
 
-      {/* 2. STATUS SWITCH */}
-      <View style={styles.availabilityCard}>
-        <View>
-          <Text style={styles.availabilityLabel}>Current Status</Text>
-          <Text style={[styles.availabilityStatus, isAvailable ? styles.textOnline : styles.textOffline]}>
-            {isAvailable ? '🟢 Online' : '🔴 Offline'}
-          </Text>
-        </View>
-        <Switch
-          value={isAvailable}
-          onValueChange={handleAvailabilityToggle}
-          disabled={loading || !location}
-          trackColor={{ false: '#ccc', true: '#e74c3c' }}
-          thumbColor={'#fff'}
-        />
-      </View>
-
-      {/* 3. GPS BAR */}
-      <View style={[styles.gpsBar, location ? styles.gpsOk : styles.gpsBad]}>
-        <Text style={styles.gpsText}>
-          {location 
-            ? `📡 GPS Active: ${location.latitude.toFixed(4)}, ${location.longitude.toFixed(4)}` 
-            : '🛰️ Acquiring Satellite Signal...'}
-        </Text>
-      </View>
-
-      {/* 4. NEARBY RESOURCES */}
-      <View style={styles.sectionContainer}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>🏥 Nearby Facilities</Text>
-          {location && (
-            <TouchableOpacity onPress={() => fetchRealNearbyResources(location)}>
-              <Text style={styles.refreshText}>🔄 Refresh</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {resourcesLoading ? (
-          <ActivityIndicator size="small" color="#e74c3c" />
-        ) : medicalResources.length > 0 ? (
-          <FlatList
-            data={medicalResources}
-            renderItem={renderResourceItem}
-            keyExtractor={(item) => item.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.resourcesList}
-          />
-        ) : (
-          <Text style={styles.emptyText}>No facilities found nearby.</Text>
-        )}
-      </View>
-
-      {/* 5. STATS */}
-      <Text style={styles.sectionTitle}>📊 My Impact</Text>
-      <View style={styles.statsGrid}>
-        <View style={styles.statCard}>
-          <Text style={styles.statEmoji}>🚑</Text>
-          <Text style={styles.statValue}>{stats.successful_responses}</Text>
-          <Text style={styles.statLabel}>Responses</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statEmoji}>❤️</Text>
-          <Text style={styles.statValue}>{stats.total_lives_helped}</Text>
-          <Text style={styles.statLabel}>Lives Saved</Text>
-        </View>
-      </View>
-
-    </ScrollView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  contentContainer: { padding: 20 },
-  
-  header: {
+  mainContainer: { flex: 1, backgroundColor: '#F8FAFC' },
+
+  // HEADER
+  headerContainer: {
+    backgroundColor: '#DC2626',
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 50,
+    paddingBottom: 20, paddingHorizontal: 20,
+    borderBottomLeftRadius: 0, borderBottomRightRadius: 0,
+    elevation: 4, zIndex: 10
+  },
+  headerContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  headerLeft: { flex: 1, justifyContent: 'center' },
+  brandingRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  logoIconBg: { width: 24, height: 24, borderRadius: 4, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', marginRight: 8 },
+  appName: { fontSize: 20, color: '#fff', fontWeight: '400' },
+  appNameBold: { fontWeight: '800' },
+  locationPill: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.1)', 
+    paddingVertical: 4, paddingHorizontal: 8, borderRadius: 12,
+    alignSelf: 'flex-start', maxWidth: '95%'
+  },
+  locationText: { fontSize: 12, color: '#FFFFFF', fontWeight: '600' },
+  profileBtn: { 
+    width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)', 
+    justifyContent: 'center', alignItems: 'center', marginTop: 4 
+  },
+  profileInitials: { fontSize: 16, fontWeight: '700', color: '#fff' },
+
+  // LAYOUT
+  mapContainer: { height: '35%', width: '100%', overflow: 'hidden' }, 
+  map: { width: '100%', height: '100%' },
+  dashboardContainer: { flex: 1, backgroundColor: '#F8FAFC', borderTopLeftRadius: 24, borderTopRightRadius: 24, marginTop: -20, paddingTop: 20 }, 
+  scrollContent: { padding: 20, paddingBottom: 80 },
+
+  // CARDS
+  statusCard: {
+    backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 20,
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    marginBottom: 20, marginTop: 30
+    elevation: 2
   },
-  greeting: { fontSize: 24, fontWeight: 'bold', color: '#333' },
-  subheading: { fontSize: 14, color: '#666' },
-  profileButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#333', justifyContent: 'center', alignItems: 'center' },
-  profileInitial: { color: '#fff', fontWeight: 'bold' },
+  statusInfo: { flex: 1 },
+  statusLabel: { fontSize: 12, color: '#94A3B8', fontWeight: '700', textTransform: 'uppercase', marginBottom: 4 },
+  statusBadgeRow: { flexDirection: 'row', alignItems: 'center' },
+  statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
+  statusText: { fontSize: 18, fontWeight: '800' },
 
-  availabilityCard: {
-    backgroundColor: '#fff', borderRadius: 12, padding: 15, marginBottom: 10,
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', elevation: 2
+  statsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
+  statCard: {
+    width: '31%', backgroundColor: '#fff', padding: 10, borderRadius: 16,
+    alignItems: 'center', elevation: 2
   },
-  availabilityLabel: { fontSize: 12, color: '#999' },
-  availabilityStatus: { fontSize: 16, fontWeight: '700' },
-  textOnline: { color: '#2ecc71' },
-  textOffline: { color: '#95a5a6' },
+  statIconBg: { width: 36, height: 36, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 6 },
+  statValue: { fontSize: 16, fontWeight: '800', color: '#1E293B' },
+  statLabel: { fontSize: 10, color: '#64748B', marginTop: 2 },
 
-  gpsBar: { padding: 8, borderRadius: 8, marginBottom: 20, alignItems: 'center' },
-  gpsOk: { backgroundColor: '#e8f5e9' },
-  gpsBad: { backgroundColor: '#fff3e0' },
-  gpsText: { fontSize: 11, fontWeight: '600', color: '#555' },
-
-  sectionContainer: { marginBottom: 25 },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
-  sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#333' },
-  refreshText: { fontSize: 12, color: '#3498db', fontWeight: '600' },
-  
-  resourcesList: { paddingRight: 20 },
+  // RESOURCES & ACTIONS
+  sectionHeader: { fontSize: 16, fontWeight: '700', color: '#334155', marginBottom: 12, marginLeft: 4 },
+  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, paddingRight: 10 },
+  resourcesList: { paddingRight: 20, paddingBottom: 10 },
   resourceCard: {
-    backgroundColor: '#fff', borderRadius: 10, padding: 12, marginRight: 10, width: 180, elevation: 2
+    backgroundColor: '#fff', borderRadius: 16, padding: 12, marginRight: 12, width: 160,
+    elevation: 2, borderWidth: 1, borderColor: '#F1F5F9'
   },
-  resourceHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 5 },
-  resourceEmoji: { fontSize: 20, marginRight: 8 },
-  resourceName: { fontWeight: 'bold', fontSize: 13, flex: 1 },
-  resourceType: { fontSize: 10, color: '#999', fontWeight: 'bold' },
-  resourceAddress: { fontSize: 11, color: '#666', marginBottom: 5 },
-  resourceDistance: { fontSize: 11, color: '#e74c3c', fontWeight: 'bold' },
-  emptyText: { color: '#999', fontStyle: 'italic' },
+  resourceHeader: { flexDirection: 'row', marginBottom: 8 },
+  resourceIconBg: { width: 28, height: 28, backgroundColor: '#FEE2E2', borderRadius: 8, justifyContent: 'center', alignItems: 'center', marginRight: 8 },
+  resourceName: { fontSize: 13, fontWeight: '700', color: '#1E293B', marginBottom: 2 },
+  resourceType: { fontSize: 10, color: '#64748B', fontWeight: '600' },
+  resourceAddress: { fontSize: 11, color: '#94A3B8', marginBottom: 8 },
+  distBadge: { alignSelf: 'flex-start', backgroundColor: '#F1F5F9', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  resourceDistance: { fontSize: 10, fontWeight: '700', color: '#64748B' },
+  emptyContainer: { alignItems: 'center', padding: 10 },
+  emptyText: { color: '#94A3B8', fontStyle: 'italic', fontSize: 12 },
 
-  statsGrid: { flexDirection: 'row', justifyContent: 'space-between' },
-  statCard: { flex: 1, backgroundColor: '#fff', borderRadius: 12, padding: 15, alignItems: 'center', marginHorizontal: 5, elevation: 2 },
-  statEmoji: { fontSize: 24, marginBottom: 5 },
-  statValue: { fontSize: 20, fontWeight: 'bold', color: '#333' },
-  statLabel: { fontSize: 12, color: '#999' },
+  actionRow: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', 
+    padding: 16, borderRadius: 16, elevation: 2, marginBottom: 10
+  },
+  actionIcon: { width: 36, height: 36, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  actionText: { flex: 1, fontSize: 15, fontWeight: '600', color: '#334155' },
+
+  // MISSION
+  missionCard: {
+    backgroundColor: '#fff', borderRadius: 16, padding: 20, elevation: 5,
+    borderWidth: 1, borderColor: '#FEE2E2', marginBottom: 20
+  },
+  missionHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', paddingBottom: 10 },
+  missionTitle: { fontSize: 14, fontWeight: '800', color: '#DC2626' },
+  missionTime: { fontSize: 12, color: '#64748B', fontWeight: '600' },
+  missionInfo: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  victimName: { fontSize: 18, fontWeight: '700', color: '#1E293B' },
+  victimType: { fontSize: 14, fontWeight: '600', color: '#DC2626', marginBottom: 4 },
+  victimAddress: { fontSize: 13, color: '#64748B', maxWidth: '80%' },
+  navBtn: { 
+    width: 50, height: 50, borderRadius: 25, backgroundColor: '#0284C7',
+    justifyContent: 'center', alignItems: 'center', elevation: 3
+  },
+  completeBtn: {
+    backgroundColor: '#22C55E', paddingVertical: 15, borderRadius: 12, alignItems: 'center'
+  },
+  completeBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  victimMarker: {
+    backgroundColor: '#DC2626', width: 36, height: 36, borderRadius: 18,
+    justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff'
+  },
+
+  // FOOTER
+  footer: { 
+    paddingVertical: 12, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', 
+    position: 'absolute', bottom: 0, left: 0, right: 0 
+  },
+  footerLink: { color: '#fff', fontSize: 12, fontWeight: '700', paddingHorizontal: 12 },
+  footerDivider: { color: 'rgba(255,255,255,0.4)', fontSize: 14 },
 });

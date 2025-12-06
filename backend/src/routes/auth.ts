@@ -1,33 +1,16 @@
 import { Router, Request, Response } from 'express';
+import { PrismaClient } from '@prisma/client'; // Use Prisma
+import bcrypt from 'bcryptjs'; // Use Bcrypt for security
 import dotenv from 'dotenv';
-import { users } from '../data/store'; // <--- IMPORT SHARED STORE
 
 dotenv.config();
 
 const router = Router();
-const otpStore: Map<string, { otp: string; expiresAt: number }> = new Map();
+const prisma = new PrismaClient();
 
-// --- ADMIN CREDENTIALS ---
+// --- ADMIN CREDENTIALS (Hardcoded for safety) ---
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@neighborcare.com';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
-
-// POST /api/auth/request-otp
-router.post('/request-otp', async (req: Request, res: Response) => {
-  try {
-    const { phone_number } = req.body;
-    if (!phone_number) return res.status(400).json({ error: 'Phone number required' });
-
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = Date.now() + 5 * 60 * 1000; 
-
-    otpStore.set(phone_number, { otp, expiresAt });
-    console.log(`OTP for ${phone_number}: ${otp}`); 
-
-    res.status(200).json({ message: 'OTP sent successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to send OTP' });
-  }
-});
 
 // POST /api/auth/register
 router.post('/register', async (req: Request, res: Response) => {
@@ -38,59 +21,49 @@ router.post('/register', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'All fields are required' });
     }
 
-    // 1. Check if trying to register as Admin
-    if (email === ADMIN_EMAIL) {
-       return res.status(400).json({ error: 'This email is reserved.' });
-    }
-
-    // 2. Check for duplicates in SHARED STORE
-    // We normalize email to lowercase
-    const existingUser = users.find(u => 
-      u.email.toLowerCase() === email.toLowerCase() || 
-      u.phone_number === phone_number
-    );
+    // 1. Check if user exists in DB
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: email },
+          { phone_number: phone_number }
+        ]
+      }
+    });
 
     if (existingUser) {
       return res.status(409).json({ error: 'User with this Email or Phone already exists.' });
     }
 
-    // 3. Create User
-    const newUser = {
-      id: 'user_' + Date.now(),
-      name,
-      email: email.toLowerCase(),
-      phone_number,
-      password, // In a real app, hash this!
-      is_responder: is_responder || false,
-      is_admin: false,
-      is_certified: false, // Responders start uncertified
-      exam_passed: false,
-      created_at: new Date().toISOString()
-    };
+    // 2. Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 4. Save to SHARED STORE
-    users.push(newUser);
-    console.log(`✅ Registered: ${newUser.email} (${newUser.is_responder ? 'Responder' : 'User'})`);
-
-    res.status(201).json({
-      ...newUser,
-      token: 'jwt_token_user_created',
+    // 3. Create User in DB
+    const newUser = await prisma.user.create({
+      data: {
+        name,
+        email: email.toLowerCase(),
+        phone_number,
+        password: hashedPassword, // Store secure hash
+        is_responder: is_responder || false,
+        is_admin: false,
+      }
     });
+
+    console.log(`✅ DB Registered: ${newUser.email}`);
+
+    // Return user without password
+    const { password: _, ...userWithoutPassword } = newUser;
+    
+    res.status(201).json({
+      ...userWithoutPassword,
+      token: 'jwt_token_placeholder', // Replace with real JWT later if needed
+    });
+
   } catch (error) {
+    console.error("Registration Error:", error);
     res.status(500).json({ error: 'Registration failed' });
   }
-});
-
-// POST /api/auth/login (OTP Stub)
-router.post('/login', async (req: Request, res: Response) => {
-    // Keep your existing OTP logic here
-    res.status(200).json({ 
-      id: 'otp_user', 
-      name: 'Mobile User',
-      phone_number: req.body.phone_number,
-      is_responder: false,
-      token: 'otp_token' 
-    });
 });
 
 // POST /api/auth/login-password
@@ -104,38 +77,53 @@ router.post('/login-password', async (req: Request, res: Response) => {
 
     console.log(`🔐 Login Attempt: ${loginInput}`);
 
-    // 1. ADMIN CHECK
+    // 1. ADMIN CHECK (Hardcoded bypass)
     if (loginInput === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-      console.log('✅ Admin Logged In');
       return res.status(200).json({
         id: 'admin_001',
         name: 'ADMIN',
         email: ADMIN_EMAIL,
         is_responder: false,
         is_admin: true,
-        token: 'jwt_token_admin',
+        token: 'admin_token',
       });
     }
 
-    // 2. REGULAR USER CHECK (From Shared Store)
-    const foundUser = users.find(u => 
-      (u.email === loginInput.toLowerCase() || u.phone_number === loginInput) && 
-      u.password === password
-    );
+    // 2. DATABASE CHECK
+    // Allow login by either Email OR Phone
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: loginInput.toLowerCase() },
+          { phone_number: loginInput }
+        ]
+      }
+    });
 
-    if (foundUser) {
-      console.log(`✅ User Logged In: ${foundUser.name}`);
-      return res.status(200).json({
-        ...foundUser,
-        token: 'jwt_token_verified',
-      });
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
     }
 
-    console.log('❌ Login Failed: Invalid credentials');
-    return res.status(401).json({ error: 'Invalid credentials' });
+    // 3. Verify Password
+    const isMatch = await bcrypt.compare(password, user.password);
+
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Invalid password' });
+    }
+
+    console.log(`✅ DB Login Success: ${user.name}`);
+
+    // Remove password from response
+    const { password: _, ...userWithoutPassword } = user;
+
+    return res.status(200).json({
+      ...userWithoutPassword,
+      token: 'user_token_placeholder',
+    });
 
   } catch (error) {
-    res.status(401).json({ error: 'Login failed' });
+    console.error("Login Error:", error);
+    res.status(500).json({ error: 'Login failed' });
   }
 });
 

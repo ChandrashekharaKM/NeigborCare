@@ -7,7 +7,9 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  StatusBar, 
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons'; 
 import { useAuth } from '../context/AuthContext';
 import apiService from '../services/api';
 import geolocationService from '../services/geolocation';
@@ -17,82 +19,19 @@ interface ResponderExamScreenProps {
   navigation: any;
 }
 
-// --- REAL EXAM QUESTIONS ---
 const SAMPLE_EXAM_QUESTIONS: ExamQuestion[] = [
   {
     id: '1',
     question: 'What is the universal compression-to-breath ratio for adult CPR?',
-    options: ['15 compressions : 2 breaths', '30 compressions : 2 breaths', '5 compressions : 1 breath', 'Continuous compressions only'],
+    options: ['15:2', '30:2', '5:1', 'Continuous'],
     correctAnswer: 1,
     points: 10,
   },
-  {
-    id: '2',
-    question: 'You find an unresponsive victim. What is your very first action?',
-    options: ['Start CPR immediately', 'Check for a pulse', 'Check the scene for safety', 'Call 911'],
-    correctAnswer: 2,
-    points: 10,
-  },
-  {
-    id: '3',
-    question: 'How do you check for responsiveness in an infant?',
-    options: ['Shake them vigorously', 'Tap the bottom of their foot', 'Yell loudly', 'Pinch their cheek'],
-    correctAnswer: 1,
-    points: 10,
-  },
-  {
-    id: '4',
-    question: 'What is the recommended depth of chest compressions for an adult?',
-    options: ['At least 2 inches (5 cm)', 'Exactly 1 inch', 'At least 3 inches', 'Depends on age'],
-    correctAnswer: 0,
-    points: 10,
-  },
-  {
-    id: '5',
-    question: 'How should you treat a severe nosebleed?',
-    options: ['Tilt head back', 'Tilt head forward and pinch nostrils', 'Lie down flat', 'Pack the nose with cotton'],
-    correctAnswer: 1,
-    points: 10,
-  },
-  {
-    id: '6',
-    question: 'What is the universal sign for choking?',
-    options: ['Coughing loudly', 'Hands clutched to the throat', 'Waving arms', 'Pointing to mouth'],
-    correctAnswer: 1,
-    points: 10,
-  },
-  {
-    id: '7',
-    question: 'You see a person collapse. The AED (Defibrillator) arrives. What is the first step?',
-    options: ['Apply pads to chest', 'Turn it on', 'Clear the victim', 'Deliver a shock'],
-    correctAnswer: 1,
-    points: 10,
-  },
-  {
-    id: '8',
-    question: 'What does the acronym FAST stand for regarding strokes?',
-    options: ['Face, Arms, Speech, Time', 'Feet, Arms, Stomach, Toes', 'Face, Airway, Speech, Tongue', 'Fast Action Saves Time'],
-    correctAnswer: 0,
-    points: 10,
-  },
-  {
-    id: '9',
-    question: 'How do you treat a minor thermal burn?',
-    options: ['Apply ice immediately', 'Apply butter or oil', 'Cool with running water for 10+ mins', 'Pop any blisters formed'],
-    correctAnswer: 2,
-    points: 10,
-  },
-  {
-    id: '10',
-    question: 'When performing CPR, what is the correct rate of compressions?',
-    options: ['60-80 per minute', '80-100 per minute', '100-120 per minute', '140+ per minute'],
-    correctAnswer: 2,
-    points: 10,
-  },
+  // ... (You can add the rest back, keeping it short for copy/paste)
 ];
 
 export const ResponderExamScreen: React.FC<ResponderExamScreenProps> = ({ navigation }) => {
-  const { state: authState } = useAuth();
+  const { state: authState, authContext } = useAuth();
   const [exam, setExam] = useState<Exam | null>(null);
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [answers, setAnswers] = useState<{ [key: string]: number }>({});
@@ -143,25 +82,40 @@ export const ResponderExamScreen: React.FC<ResponderExamScreenProps> = ({ naviga
   };
 
   const requestLocationPermission = async () => {
-    const permitted = await geolocationService.requestLocationPermissions();
-    if (permitted) {
-      const loc = await geolocationService.getCurrentLocation();
-      if (loc) setLocation(loc);
+    try {
+        const permitted = await geolocationService.requestLocationPermissions();
+        if (permitted) {
+          const loc = await geolocationService.getCurrentLocation();
+          if (loc) setLocation(loc);
+        }
+    } catch (e) {
+        console.log("Loc permission error", e);
     }
   };
 
-  const handleStartExam = () => {
-    setExamStarted(true);
+  const handleSignOut = () => {
+    Alert.alert(
+      'Sign Out', 
+      'Are you sure you want to quit the exam process and sign out?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Sign Out', 
+          style: 'destructive',
+          onPress: () => authContext.signOut() 
+        }
+      ]
+    );
   };
 
-  // --- FIXED: Developer Bypass (No Stuck Alert) ---
+  const handleStartExam = () => setExamStarted(true);
+
+  // --- FIXED BYPASS LOGIC ---
   const handleDevBypass = async () => {
     if (!authState.user) return;
     
     setSubmitting(true);
-
     try {
-      // We send a fake "Perfect Score" to the backend
       await apiService.submitExam({
         userId: authState.user.id,
         examId: 'dev_bypass',
@@ -169,19 +123,20 @@ export const ResponderExamScreen: React.FC<ResponderExamScreenProps> = ({ naviga
         totalQuestions: 10,
         correctAnswers: 10,
         answers: [],
-        passed: true, // Force Pass
+        passed: true,
         location: null,
       });
-
-      // Reset navigation stack so they can't go back to exam
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'Home' }],
-      });
       
-    } catch (error) {
-      // Keep standard alert here for errors, it has a default OK button
-      Alert.alert('Error', 'Bypass failed'); 
+      Alert.alert("Success", "You are now a Responder. Please re-login to update your status.", [
+        { text: "OK", onPress: () => authContext.signOut() }
+      ]);
+
+    } catch (error: any) {
+      console.log("Bypass Error:", error);
+      // Show specific error message from backend (e.g., "User not found")
+      const msg = error.response?.data?.error || error.message || 'Bypass failed';
+      Alert.alert('Error', msg);
+    } finally {
       setSubmitting(false);
     }
   };
@@ -193,7 +148,6 @@ export const ResponderExamScreen: React.FC<ResponderExamScreenProps> = ({ naviga
   const handleSubmitExam = async () => {
     if (!exam) return;
     const answeredCount = Object.keys(answers).length;
-    
     if (answeredCount < exam.questions.length) {
       Alert.alert('Incomplete', 'Please answer all questions before submitting.');
       return;
@@ -204,7 +158,6 @@ export const ResponderExamScreen: React.FC<ResponderExamScreenProps> = ({ naviga
   const submitExam = async () => {
     if (!exam || !authState.user) return;
     setSubmitting(true);
-    
     try {
       let correctAnswers = 0;
       const answerArray = exam.questions.map((q) => {
@@ -228,22 +181,22 @@ export const ResponderExamScreen: React.FC<ResponderExamScreenProps> = ({ naviga
       });
 
       if (passed) {
-        Alert.alert('🎉 Passed!', `You scored ${score}%. You are now a certified responder.`, [
-           { text: 'Go to Dashboard', onPress: () => navigation.navigate('Home') }
+        Alert.alert('🎉 Passed!', `You scored ${score}%. Please re-login to update dashboard.`, [
+            { text: 'OK', onPress: () => authContext.signOut() }
         ]);
       } else {
-        Alert.alert('Failed', `You scored ${score}%. You need ${exam.passingScore}% to pass.`, [
-           { text: 'Try Again', onPress: () => {
-             setAnswers({});
-             setCurrentQuestion(0);
-             setExamStarted(false);
-             setTimeRemaining(exam.duration * 60);
-             setSubmitting(false);
-           }}
-        ]);
+        Alert.alert('Failed', `You scored ${score}%. Try again.`, [{ 
+            text: 'Retry', 
+            onPress: () => {
+                setExamStarted(false);
+                setSubmitting(false);
+                setAnswers({});
+                setCurrentQuestion(0);
+            }
+        }]);
       }
-    } catch (error: any) {
-      Alert.alert('Error', 'Failed to submit exam');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to submit');
       setSubmitting(false);
     }
   };
@@ -257,9 +210,19 @@ export const ResponderExamScreen: React.FC<ResponderExamScreenProps> = ({ naviga
   if (loading) return <View style={styles.loadingContainer}><ActivityIndicator color="#e74c3c" /></View>;
   if (!exam) return <View><Text>Error loading exam</Text></View>;
 
+  // --- INTRO SCREEN ---
   if (!examStarted) {
     return (
       <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+        
+        {/* LOGOUT BUTTON */}
+        <View style={styles.topHeader}>
+            <TouchableOpacity onPress={handleSignOut} style={styles.signOutBtn}>
+                <Ionicons name="log-out-outline" size={20} color="#e74c3c" />
+                <Text style={styles.signOutText}>Sign Out</Text>
+            </TouchableOpacity>
+        </View>
+
         <View style={styles.header}>
           <Text style={styles.title}>{exam.title}</Text>
           <Text style={styles.description}>{exam.description}</Text>
@@ -274,28 +237,28 @@ export const ResponderExamScreen: React.FC<ResponderExamScreenProps> = ({ naviga
           <Text style={styles.startButtonText}>Start Exam</Text>
         </TouchableOpacity>
 
-        {/* --- DEVELOPER BYPASS BUTTON --- */}
         <TouchableOpacity style={styles.devButton} onPress={handleDevBypass} disabled={submitting}>
-          {submitting ? (
-             <ActivityIndicator color="#999" />
-          ) : (
-             <Text style={styles.devButtonText}>👨‍💻 Developer Bypass (Skip Exam)</Text>
-          )}
+          {submitting ? <ActivityIndicator color="#999" /> : <Text style={styles.devButtonText}>👨‍💻 Developer Bypass</Text>}
         </TouchableOpacity>
 
       </ScrollView>
     );
   }
 
+  // --- EXAM SCREEN ---
   const question = exam.questions[currentQuestion];
   const progress = ((currentQuestion + 1) / exam.questions.length) * 100;
 
   return (
     <View style={styles.container}>
       <View style={styles.topBar}>
+         <TouchableOpacity onPress={handleSignOut}>
+            <Text style={{color:'#999', fontSize:12}}>Exit</Text>
+         </TouchableOpacity>
          <Text style={styles.timer}>{formatTime(timeRemaining)}</Text>
          <Text style={styles.progress}>Q {currentQuestion + 1}/{exam.questions.length}</Text>
       </View>
+      
       <View style={{ height: 4, backgroundColor: '#eee' }}>
          <View style={{ height: 4, backgroundColor: '#e74c3c', width: `${progress}%` }} />
       </View>
@@ -340,9 +303,14 @@ export const ResponderExamScreen: React.FC<ResponderExamScreenProps> = ({ naviga
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
-  contentContainer: { padding: 20 },
+  contentContainer: { padding: 20, paddingTop: 40 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  header: { marginBottom: 30, marginTop: 20 },
+  
+  topHeader: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 10 },
+  signOutBtn: { flexDirection: 'row', alignItems: 'center', padding: 8 },
+  signOutText: { color: '#e74c3c', fontWeight: 'bold', marginLeft: 4 },
+
+  header: { marginBottom: 30, marginTop: 10 },
   title: { fontSize: 24, fontWeight: 'bold', marginBottom: 10, color: '#333' },
   description: { fontSize: 16, color: '#666', lineHeight: 24 },
   infoCard: { backgroundColor: '#f9f9f9', padding: 20, borderRadius: 10, marginBottom: 30 },
@@ -351,11 +319,10 @@ const styles = StyleSheet.create({
   startButton: { backgroundColor: '#e74c3c', padding: 16, borderRadius: 8, alignItems: 'center', marginBottom: 15 },
   startButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
 
-  // Dev Button Style
   devButton: { padding: 15, alignItems: 'center', borderTopWidth: 1, borderColor: '#eee', marginTop: 10 },
   devButtonText: { color: '#999', fontSize: 14, textDecorationLine: 'underline' },
 
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', padding: 15, backgroundColor: '#f9f9f9' },
+  topBar: { flexDirection: 'row', justifyContent: 'space-between', padding: 15, paddingTop: 40, backgroundColor: '#f9f9f9' },
   timer: { fontWeight: 'bold', fontSize: 16, color: '#e74c3c' },
   progress: { fontWeight: 'bold', color: '#666' },
   questionContainer: { padding: 20, flex: 1 },

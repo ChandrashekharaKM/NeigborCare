@@ -6,39 +6,40 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:./dev.db"
 }
 
 model User {
-  id                    String      @id @default(cuid())
-  phone_number          String      @unique
-  name                  String
-  email                 String?     @unique
-  profile_picture       String?
-  is_responder          Boolean     @default(false)
-  is_admin              Boolean     @default(false)
-  created_at            DateTime    @default(now())
-  updated_at            DateTime    @updatedAt
+  id                        String      @id @default(cuid())
+  phone_number              String      @unique
+  name                      String
+  email                     String?     @unique
+  password                  String      // <--- ADDED: Required for login
+  profile_picture           String?
+  is_responder              Boolean     @default(false)
+  is_admin                  Boolean     @default(false)
+  created_at                DateTime    @default(now())
+  updated_at                DateTime    @updatedAt
 
   // Responder specific fields
-  is_certified          Boolean?    @default(false)
-  is_available          Boolean?    @default(false)
-  certification_type    String?
+  is_certified              Boolean?    @default(false)
+  is_available              Boolean?    @default(false)
+  certification_type        String?
   certification_uploaded_at DateTime?
-  exam_passed           Boolean     @default(false)
-  exam_score            Float?
-  exam_completed_at     DateTime?
-  latitude              Float?
-  longitude             Float?
-  successful_responses  Int         @default(0)
-  emergency_alerts_received Int    @default(0)
-  total_lives_helped    Int         @default(0)
+  exam_passed               Boolean     @default(false)
+  exam_score                Float?
+  exam_completed_at         DateTime?
+  latitude                  Float?
+  longitude                 Float?
+  successful_responses      Int         @default(0)
+  emergency_alerts_received Int         @default(0)
+  total_lives_helped        Int         @default(0)
 
   // Relations
-  created_emergencies   Emergency[] @relation("UserEmergencies")
-  responded_emergencies Emergency[] @relation("ResponderEmergencies")
-  exam_results          ExamResult[]
+  created_emergencies       Emergency[] @relation("UserEmergencies")
+  responded_emergencies     Emergency[] @relation("ResponderEmergencies")
+  exam_results              ExamResult[]
 
   @@index([phone_number])
   @@index([is_responder])
@@ -47,25 +48,25 @@ model User {
 }
 
 model Emergency {
-  id                String    @id @default(cuid())
-  user_id           String
-  user              User      @relation("UserEmergencies", fields: [user_id], references: [id])
-  responder_id      String?
-  responder         User?     @relation("ResponderEmergencies", fields: [responder_id], references: [id])
+  id              String    @id @default(cuid())
+  user_id         String
+  user            User      @relation("UserEmergencies", fields: [user_id], references: [id])
+  responder_id    String?
+  responder       User?     @relation("ResponderEmergencies", fields: [responder_id], references: [id])
   
-  latitude          Float
-  longitude         Float
-  emergency_type    String    // 'Cardiac', 'Bleeding', 'Choking', 'Fracture', 'Other'
-  status            String    @default("pending") // 'pending', 'in-progress', 'resolved'
-  description       String?
+  latitude        Float
+  longitude       Float
+  emergency_type  String    // 'Cardiac', 'Bleeding', 'Choking', 'Fracture', 'Other'
+  status          String    @default("pending") // 'pending', 'in-progress', 'resolved'
+  description     String?
   
-  created_at        DateTime  @default(now())
-  resolved_at       DateTime?
-  updated_at        DateTime  @updatedAt
+  created_at      DateTime  @default(now())
+  resolved_at     DateTime?
+  updated_at      DateTime  @updatedAt
 
   // Relations
-  alerts            EmergencyAlert[]
-  updates           LocationUpdate[]
+  alerts          EmergencyAlert[]
+  updates         LocationUpdate[]
 
   @@index([user_id])
   @@index([responder_id])
@@ -74,15 +75,15 @@ model Emergency {
 }
 
 model EmergencyAlert {
-  id                String    @id @default(cuid())
-  emergency_id      String
-  emergency         Emergency @relation(fields: [emergency_id], references: [id], onDelete: Cascade)
-  responder_id      String
+  id              String    @id @default(cuid())
+  emergency_id    String
+  emergency       Emergency @relation(fields: [emergency_id], references: [id], onDelete: Cascade)
+  responder_id    String
   
-  distance          Int       // Distance in meters
-  status            String    @default("pending") // 'pending', 'accepted', 'declined'
-  sent_at           DateTime  @default(now())
-  responded_at      DateTime?
+  distance        Int       // Distance in meters
+  status          String    @default("pending") // 'pending', 'accepted', 'declined'
+  sent_at         DateTime  @default(now())
+  responded_at    DateTime?
 
   @@index([emergency_id])
   @@index([responder_id])
@@ -90,14 +91,14 @@ model EmergencyAlert {
 }
 
 model LocationUpdate {
-  id                String    @id @default(cuid())
-  emergency_id      String
-  emergency         Emergency @relation(fields: [emergency_id], references: [id], onDelete: Cascade)
+  id              String    @id @default(cuid())
+  emergency_id    String
+  emergency       Emergency @relation(fields: [emergency_id], references: [id], onDelete: Cascade)
   
-  user_id           String
-  latitude          Float
-  longitude         Float
-  timestamp         DateTime
+  user_id         String
+  latitude        Float
+  longitude       Float
+  timestamp       DateTime
 
   @@index([emergency_id])
   @@index([user_id])
@@ -105,17 +106,17 @@ model LocationUpdate {
 }
 
 model Resource {
-  id                String    @id @default(cuid())
-  name              String
-  type              String    // 'hospital', 'pharmacy', 'clinic', etc.
-  latitude          Float
-  longitude         Float
-  phone             String?
-  address           String?
-  is_24_hours       Boolean   @default(false)
+  id              String    @id @default(cuid())
+  name            String
+  type            String    // 'hospital', 'pharmacy', 'clinic', etc.
+  latitude        Float
+  longitude       Float
+  phone           String?
+  address         String?
+  is_24_hours     Boolean   @default(false)
   
-  created_at        DateTime  @default(now())
-  updated_at        DateTime  @updatedAt
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
 
   @@index([type])
   @@index([latitude, longitude])
@@ -125,7 +126,7 @@ model Exam {
   id                String    @id @default(cuid())
   title             String
   description       String?
-  questions         Json      // Array of questions with options and correct answer
+  questions         String    // <--- CHANGED: Json -> String (for SQLite compatibility)
   passing_score     Int       @default(70) // Percentage
   duration_minutes  Int       @default(30)
   is_active         Boolean   @default(true)
@@ -149,7 +150,7 @@ model ExamResult {
   score             Float     // Percentage score
   total_questions   Int
   correct_answers   Int
-  answers           Json      // User's answers
+  answers           String    // <--- CHANGED: Json -> String (for SQLite compatibility)
   passed            Boolean
   location_lat      Float?    // Location when exam was taken
   location_lng      Float?
