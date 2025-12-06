@@ -3,16 +3,9 @@ import { Platform } from 'react-native';
 
 // --- CONFIGURATION ---
 const getApiBaseUrl = () => {
-  // Replace with your actual computer IP found via ipconfig/ifconfig
+  // ✅ YOUR IP ADDRESS
   const MANUAL_IP = '192.168.0.174'; 
   
-  if (__DEV__) {
-    if (Platform.OS === 'android') {
-      return `http://${MANUAL_IP}:5000`;
-    } else {
-      return `http://${MANUAL_IP}:5000`;
-    }
-  }
   return `http://${MANUAL_IP}:5000`;
 };
 
@@ -101,16 +94,22 @@ class APIService {
       const response = await this.api.put(`/api/users/${userId}`, data);
       return response.data;
     } catch (error: any) {
-      console.error("Update Profile Error", error);
       throw new Error(error.response?.data?.error || 'Failed to update profile');
     }
   }
 
-  async updatePushToken(userId: string, token: string) {
+  // --- RESPONDER STATUS (The specific fix) ---
+  async setResponderAvailability(userId: string, isAvailable: boolean, latitude?: number, longitude?: number) {
     try {
-      console.log(`Push token for ${userId}: ${token}`);
-    } catch (error) {
-      console.error("Push Token Error", error);
+      const response = await this.api.put(`/api/responders/${userId}/availability`, {
+        is_available: isAvailable,
+        latitude,
+        longitude,
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error("Set Status Error:", error.message);
+      throw error; // Let the UI handle the error
     }
   }
 
@@ -120,7 +119,6 @@ class APIService {
       const response = await this.api.get('/api/admin/users');
       return response.data;
     } catch (error: any) {
-      console.error('Get users error:', error);
       return { users: [] };
     }
   }
@@ -130,7 +128,6 @@ class APIService {
       const response = await this.api.get('/api/admin/responders');
       return response.data;
     } catch (error: any) {
-      console.error('Get responders error:', error);
       return { responders: [] };
     }
   }
@@ -140,27 +137,16 @@ class APIService {
       const response = await this.api.post(`/api/admin/approve-responder/${userId}`);
       return response.data;
     } catch (error: any) {
-      const errorMessage = error.response?.data?.error || 'Failed to approve responder';
-      throw new Error(errorMessage);
+      throw new Error(error.response?.data?.error || 'Failed to approve responder');
     }
   }
 
-  // --- EXAMS (This is the critical part missing) ---
-  async submitExam(examData: {
-    userId: string;
-    examId: string;
-    score: number;
-    totalQuestions: number;
-    correctAnswers: number;
-    answers: any[];
-    passed: boolean;
-    location: any;
-  }) {
+  // --- EXAMS ---
+  async submitExam(examData: any) {
     try {
       const response = await this.api.post('/api/exams/submit', examData);
       return response.data;
     } catch (error: any) {
-      console.error('Submit exam error:', error);
       throw new Error(error.response?.data?.error || 'Failed to submit exam');
     }
   }
@@ -180,8 +166,20 @@ class APIService {
       throw error;
     }
   }
+  // ... inside class APIService ...
 
-  // --- RESOURCES ---
+  // --- POLLING ---
+  async checkForResponderAlerts(responderId: string) {
+    try {
+      // Calls the new route we just made
+      const response = await this.api.get(`/api/responders/${responderId}/alerts`);
+      return response.data;
+    } catch (error) {
+      // Return false silently so the polling loop doesn't crash the app
+      return { hasAlert: false };
+    }
+  }
+
   async getNearbyResources(latitude: number, longitude: number, radiusInMeters: number = 5000) {
     try {
       const response = await this.api.get('/api/resources/nearby', {
