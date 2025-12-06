@@ -20,16 +20,10 @@ import * as Location from 'expo-location';
 import { useAuth } from '../context/AuthContext';
 import apiService from '../services/api';
 import geolocationService from '../services/geolocation';
+import webSocketService from '../services/socket'; // <--- SOCKET IMPORT
 import { LocationData } from '../types';
 
 const { width } = Dimensions.get('window');
-
-// Mock Victim for Demo
-const MOCK_VICTIM_LOC = {
-  latitude: 12.972442,
-  longitude: 77.580643,
-  address: "Cubbon Park, Bengaluru"
-};
 
 interface ResponderDashboardScreenProps {
   navigation: any;
@@ -44,13 +38,11 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
   const [isAvailable, setIsAvailable] = useState(false);
   const [loading, setLoading] = useState(false);
   const [activeMission, setActiveMission] = useState<any>(null); 
-  
   const [stats, setStats] = useState({
     successful_responses: 0,
     emergency_alerts_received: 0,
     total_lives_helped: 0,
   });
-  
   const [location, setLocation] = useState<LocationData | null>(null);
   const [medicalResources, setMedicalResources] = useState<any[]>([]);
   const [resourcesLoading, setResourcesLoading] = useState(false);
@@ -62,8 +54,32 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
   useEffect(() => {
     loadResponderStats();
     initializeLocation();
-    return () => { geolocationService.stopLocationTracking(); };
-  }, []);
+    
+    // Connect Socket
+    if (authState.user) {
+        webSocketService.connect(authState.user.id);
+    }
+
+    // ⚡ LISTEN FOR REAL-TIME ALERTS ⚡
+    webSocketService.onEmergencyAlert((data) => {
+        console.log("🚨 REAL-TIME ALERT RECEIVED:", data);
+        if (isAvailable && !activeMission) {
+            Alert.alert(
+                "🚨 EMERGENCY ALERT",
+                `${data.emergency_type} reported nearby.\nVictim: ${data.user_name}`,
+                [
+                    { text: "Decline", style: "cancel" },
+                    { text: "ACCEPT MISSION", onPress: () => startMission(data) }
+                ]
+            );
+        }
+    });
+
+    return () => { 
+        geolocationService.stopLocationTracking(); 
+        webSocketService.off('emergency_alert'); // Cleanup listener
+    };
+  }, [isAvailable, activeMission]);
 
   // 2. ON LOCATION CHANGE
   useEffect(() => {
@@ -109,6 +125,21 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
     }
   };
 
+  const handleRecenter = async () => {
+    if (location && mapRef.current) {
+      mapRef.current.animateToRegion({
+        latitude: location.latitude,
+        longitude: location.longitude,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      }, 1000);
+      fetchAddress(location.latitude, location.longitude);
+    } else {
+      const currentLoc = await geolocationService.getCurrentLocation();
+      if (currentLoc) setLocation(currentLoc);
+    }
+  };
+
   const fetchRealNearbyResources = async (loc: LocationData) => {
     if (resourcesLoading) return;
     try {
@@ -145,24 +176,15 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
     setLoading(true);
     try {
       if (authState.user) {
+        // API UPDATE
         await apiService.setResponderAvailability(
           authState.user.id,
           value,
           location.latitude,
           location.longitude
         );
-      }
-      if (value) {
-        setTimeout(() => {
-            Alert.alert(
-                "🚨 Emergency Alert!",
-                "Cardiac Arrest reported 800m away. Do you accept?",
-                [
-                    { text: "Decline", style: 'cancel' },
-                    { text: "ACCEPT", onPress: () => startMission() }
-                ]
-            );
-        }, 2000);
+        // SOCKET UPDATE (Join Room)
+        webSocketService.emitResponderAvailability(authState.user.id, value);
       }
     } catch (error) {
       setIsAvailable(!value);
@@ -172,27 +194,41 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
     }
   };
 
-  const startMission = () => {
+  const startMission = async (data: any) => {
+    // 1. Notify Server we accepted
+    await apiService.acceptEmergency(data.emergency_id, authState.user!.id);
+    webSocketService.emitAcceptEmergency(data.emergency_id, authState.user!.id);
+
+    // 2. Set Mission State
     const missionData = {
-        id: 'mission_1',
-        victimName: 'Rahul Kumar',
-        type: 'Cardiac Arrest',
-        location: MOCK_VICTIM_LOC
+        id: data.emergency_id,
+        victimName: data.user_name,
+        type: data.emergency_type,
+        location: {
+            latitude: data.latitude,
+            longitude: data.longitude,
+            address: "Locating..." 
+        }
     };
-    
     setActiveMission(missionData);
 
-    // --- CRITICAL: AUTO ZOOM TO ROUTE ---
+    // 3. Start Broadcasting My Location
+    geolocationService.startLocationTracking((newLoc) => {
+        setLocation(newLoc);
+        webSocketService.emitLocationUpdate(data.emergency_id, newLoc.latitude, newLoc.longitude);
+    });
+
+    // 4. Zoom Map
     if (location && mapRef.current) {
         setTimeout(() => {
             mapRef.current?.fitToCoordinates([
                 { latitude: location.latitude, longitude: location.longitude },
                 { latitude: missionData.location.latitude, longitude: missionData.location.longitude }
             ], {
-                edgePadding: { top: 150, right: 50, bottom: 350, left: 50 }, // Padding ensures markers aren't hidden
+                edgePadding: { top: 150, right: 50, bottom: 350, left: 50 },
                 animated: true,
             });
-        }, 500); // Slight delay to ensure map renders first
+        }, 500);
     }
   };
 
@@ -230,7 +266,7 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
     <View style={styles.mainContainer}>
       <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
 
-      {/* ================= HEADER ================= */}
+      {/* HEADER */}
       <View style={styles.headerContainer}>
         <View style={styles.headerContent}>
           <View style={styles.headerLeft}>
@@ -251,10 +287,9 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
         </View>
       </View>
 
-      {/* ================= MAIN CONTENT (MAP + DASHBOARD) ================= */}
+      {/* MAIN CONTENT */}
       <View style={{flex: 1}}>
-          
-          {/* MAP SECTION */}
+          {/* MAP */}
           <View style={styles.mapContainer}>
             <MapView
                 ref={mapRef}
@@ -271,14 +306,11 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
             >
                 {activeMission && (
                     <>
-                        {/* VICTIM MARKER */}
                         <Marker coordinate={activeMission.location} title="Victim Location">
                             <View style={styles.victimMarker}>
                                 <FontAwesome5 name="exclamation" size={20} color="#fff" />
                             </View>
                         </Marker>
-                        
-                        {/* ROUTE LINE */}
                         {location && (
                             <Polyline 
                                 coordinates={[
@@ -293,18 +325,20 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
                     </>
                 )}
             </MapView>
+
+            <TouchableOpacity style={styles.gpsFab} onPress={handleRecenter} activeOpacity={0.8}>
+              <Ionicons name="navigate" size={22} color="#DC2626" />
+            </TouchableOpacity>
           </View>
 
-          {/* DASHBOARD OVERLAY */}
+          {/* DASHBOARD */}
           <View style={styles.dashboardContainer}>
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-                
                 {activeMission ? (
-                    /* ACTIVE MISSION CARD */
                     <View style={styles.missionCard}>
                         <View style={styles.missionHeader}>
                             <Text style={styles.missionTitle}>🚑 ACTIVE MISSION</Text>
-                            <Text style={styles.missionTime}>02:14 mins elapsed</Text>
+                            <Text style={styles.missionTime}>00:00 mins elapsed</Text>
                         </View>
                         <View style={styles.missionInfo}>
                             <View style={{flex:1}}>
@@ -321,9 +355,7 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
                         </TouchableOpacity>
                     </View>
                 ) : (
-                    /* NORMAL DASHBOARD */
                     <>
-                        {/* Status Card */}
                         <View style={styles.statusCard}>
                             <View style={styles.statusInfo}>
                                 <Text style={styles.statusLabel}>Duty Status</Text>
@@ -347,7 +379,6 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
                             )}
                         </View>
 
-                        {/* Stats Grid */}
                         <View style={styles.statsRow}>
                             <View style={styles.statCard}>
                                 <View style={[styles.statIconBg, { backgroundColor: '#F0F9FF' }]}>
@@ -372,7 +403,6 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
                             </View>
                         </View>
 
-                        {/* Nearby Facilities */}
                         <View style={styles.sectionHeaderRow}>
                             <Text style={styles.sectionHeader}>Nearby Facilities</Text>
                             {location && (
@@ -398,21 +428,6 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
                                 <Text style={styles.emptyText}>Tap refresh to find nearby hospitals.</Text>
                             </View>
                         )}
-
-                        {/* Actions */}
-                        <View style={{marginTop: 20}}>
-                            <Text style={styles.sectionHeader}>Actions</Text>
-                            <TouchableOpacity 
-                                style={styles.actionRow}
-                                onPress={() => navigation.navigate('Home')} 
-                            >
-                                <View style={[styles.actionIcon, { backgroundColor: '#F3E8FF' }]}>
-                                    <FontAwesome5 name="user" size={16} color="#9333EA" />
-                                </View>
-                                <Text style={styles.actionText}>Switch to User View</Text>
-                                <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
-                            </TouchableOpacity>
-                        </View>
                     </>
                 )}
                 <View style={{height: 100}} />
@@ -420,7 +435,7 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
           </View>
       </View>
 
-      {/* ================= FOOTER ================= */}
+      {/* FOOTER */}
       <View style={[styles.footer, { backgroundColor: '#DC2626' }]}>
         <TouchableOpacity onPress={() => Linking.openURL('tel:108')}>
           <Text style={styles.footerLink}>Call Ambulance (108)</Text>
@@ -430,7 +445,6 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
           <Text style={styles.footerLink}>Police (100)</Text>
         </TouchableOpacity>
       </View>
-
     </View>
   );
 };
@@ -438,7 +452,6 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
 const styles = StyleSheet.create({
   mainContainer: { flex: 1, backgroundColor: '#F8FAFC' },
 
-  // HEADER
   headerContainer: {
     backgroundColor: '#DC2626',
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 50,
@@ -464,13 +477,19 @@ const styles = StyleSheet.create({
   },
   profileInitials: { fontSize: 16, fontWeight: '700', color: '#fff' },
 
-  // LAYOUT
   mapContainer: { height: '35%', width: '100%', overflow: 'hidden' }, 
   map: { width: '100%', height: '100%' },
+  gpsFab: {
+    position: 'absolute', bottom: 35, right: 20,
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: '#fff',
+    justifyContent: 'center', alignItems: 'center',
+    elevation: 5, shadowColor: '#000', shadowOpacity: 0.2, shadowOffset: {width: 0, height: 2}
+  },
+
   dashboardContainer: { flex: 1, backgroundColor: '#F8FAFC', borderTopLeftRadius: 24, borderTopRightRadius: 24, marginTop: -20, paddingTop: 20 }, 
   scrollContent: { padding: 20, paddingBottom: 80 },
 
-  // CARDS
   statusCard: {
     backgroundColor: '#fff', borderRadius: 16, padding: 20, marginBottom: 20,
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -491,7 +510,6 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 16, fontWeight: '800', color: '#1E293B' },
   statLabel: { fontSize: 10, color: '#64748B', marginTop: 2 },
 
-  // RESOURCES & ACTIONS
   sectionHeader: { fontSize: 16, fontWeight: '700', color: '#334155', marginBottom: 12, marginLeft: 4 },
   sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, paddingRight: 10 },
   resourcesList: { paddingRight: 20, paddingBottom: 10 },
@@ -509,14 +527,6 @@ const styles = StyleSheet.create({
   emptyContainer: { alignItems: 'center', padding: 10 },
   emptyText: { color: '#94A3B8', fontStyle: 'italic', fontSize: 12 },
 
-  actionRow: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', 
-    padding: 16, borderRadius: 16, elevation: 2, marginBottom: 10
-  },
-  actionIcon: { width: 36, height: 36, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  actionText: { flex: 1, fontSize: 15, fontWeight: '600', color: '#334155' },
-
-  // MISSION
   missionCard: {
     backgroundColor: '#fff', borderRadius: 16, padding: 20, elevation: 5,
     borderWidth: 1, borderColor: '#FEE2E2', marginBottom: 20
@@ -541,7 +551,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff'
   },
 
-  // FOOTER
   footer: { 
     paddingVertical: 12, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', 
     position: 'absolute', bottom: 0, left: 0, right: 0 

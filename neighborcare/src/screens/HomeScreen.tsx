@@ -22,11 +22,11 @@ import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-ico
 import { useAuth } from '../context/AuthContext';
 import apiService from '../services/api';
 import geolocationService from '../services/geolocation';
+import webSocketService from '../services/socket'; // <--- IMPORT SOCKET
 import { LocationData } from '../types';
 
 const { width } = Dimensions.get('window');
 
-// Healthcare Focused Emergency Types
 const EMERGENCY_TYPES = [
   { id: 'Medical', icon: 'heartbeat', color: '#EF4444', label: 'Medical' }, 
   { id: 'Accident', icon: 'car-crash', color: '#F59E0B', label: 'Accident' },
@@ -41,30 +41,27 @@ interface HomeScreenProps {
 export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const { state: authState } = useAuth();
   const [loading, setLoading] = useState(false);
-  
-  // --- STATE ---
   const [location, setLocation] = useState<LocationData | null>(null);
   const [addressText, setAddressText] = useState('Acquiring...');
   const [isManualMode, setIsManualMode] = useState(false);
-  
-  // --- FEATURES ---
   const [selectedType, setSelectedType] = useState(EMERGENCY_TYPES[0]);
-
-  // --- MAP ---
   const [modalVisible, setModalVisible] = useState(false);
   const [searchText, setSearchText] = useState('');
   const mapRef = useRef<MapView>(null);
   const [mapRegion, setMapRegion] = useState({
     latitude: 12.9716, longitude: 77.5946, latitudeDelta: 0.005, longitudeDelta: 0.005,
   });
-
-  // Pulse Animation for SOS
   const [pulseAnim] = useState(new Animated.Value(1));
 
   useEffect(() => {
     startPulse();
     getCurrentLocation();
-  }, []);
+    
+    // 1. CONNECT SOCKET ON LOAD
+    if (authState.user) {
+      webSocketService.connect(authState.user.id);
+    }
+  }, [authState.user]);
 
   const startPulse = () => {
     Animated.loop(
@@ -75,7 +72,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     ).start();
   };
 
-  // --- LOGIC ---
   const fetchAddress = async (lat: number, lng: number) => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -115,7 +111,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   };
 
   const handleSOS = async () => {
-    Vibration.vibrate([0, 500, 200, 500]); // Pattern vibration
+    Vibration.vibrate([0, 500, 200, 500]);
     setLoading(true);
     try {
       let finalLocation = location || await geolocationService.getCurrentLocation();
@@ -125,9 +121,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         return;
       }
       if (authState.user) {
-        // Direct SOS logic since toggle is removed
         const modeDesc = `Critical SOS: ${selectedType.label} Emergency.`; 
         
+        // 1. CREATE IN DB
         const emergency = await apiService.createEmergency(
           authState.user.id,
           finalLocation.latitude,
@@ -135,6 +131,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           selectedType.id,
           modeDesc
         );
+
+        // 2. ⚡ EMIT SOCKET EVENT (INSTANT NOTIFICATION) ⚡
+        webSocketService.emitCreateEmergency({
+            emergency_id: emergency.emergency.id,
+            user_id: authState.user.id,
+            user_name: authState.user.name,
+            latitude: finalLocation.latitude,
+            longitude: finalLocation.longitude,
+            emergency_type: selectedType.label
+        });
+
         navigation.navigate('EmergencyTracking', { emergencyId: emergency.emergency.id });
       }
     } catch (error: any) {
@@ -148,10 +155,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     <View style={styles.mainContainer}>
       <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       
-      {/* ================= HEADER ================= */}
       <View style={styles.headerContainer}>
         <View style={styles.headerContent}>
-          {/* LEFT: Branding + Location */}
           <View style={styles.headerLeft}>
             <View style={styles.brandingRow}>
               <View style={styles.logoIconBg}>
@@ -159,7 +164,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               </View>
               <Text style={styles.appName}>Neighbor<Text style={styles.appNameBold}>Care</Text></Text>
             </View>
-
             <TouchableOpacity 
               style={styles.locationPill} 
               onPress={() => setModalVisible(true)}
@@ -170,8 +174,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               <Ionicons name="chevron-down" size={12} color="rgba(255,255,255,0.8)" style={{ marginLeft: 4 }} />
             </TouchableOpacity>
           </View>
-
-          {/* RIGHT: Profile */}
           <TouchableOpacity onPress={() => navigation.navigate('Profile')} style={styles.profileBtn}>
              <Text style={styles.profileInitials}>{authState.user?.name?.[0].toUpperCase() || 'U'}</Text>
           </TouchableOpacity>
@@ -179,12 +181,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        
-        {/* ================= SOS SECTION ================= */}
         <View style={styles.sosWrapper}>
-          {/* Red Pulse Animation */}
           <Animated.View style={[styles.pulseRing, { transform: [{ scale: pulseAnim }] }]} />
-          
           <TouchableOpacity
             style={styles.sosBtn}
             onPress={handleSOS}
@@ -203,7 +201,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           </TouchableOpacity>
         </View>
 
-        {/* ================= EMERGENCY TYPES (FIXED) ================= */}
         <View style={styles.typeGrid}>
           {EMERGENCY_TYPES.map((type) => {
             const isSelected = selectedType.id === type.id;
@@ -212,7 +209,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 key={type.id}
                 style={[
                   styles.typeCard, 
-                  // If selected: Solid Color BG. If not: White BG.
                   isSelected ? { backgroundColor: type.color, borderColor: type.color, elevation: 6 } : {}
                 ]}
                 onPress={() => setSelectedType(type)}
@@ -221,13 +217,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 <FontAwesome5 
                   name={type.icon} 
                   size={20} 
-                  // If selected: White Icon. If not: Colored Icon.
                   color={isSelected ? '#FFF' : type.color} 
                   style={{ marginBottom: 8 }} 
                 />
                 <Text style={[
                   styles.typeLabel, 
-                  // If selected: White Text. If not: Grey Text.
                   isSelected && { color: '#FFF', fontWeight: '800' }
                 ]}>
                   {type.label}
@@ -237,11 +231,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           })}
         </View>
 
-        {/* ================= QUICK ACTIONS ================= */}
         <Text style={styles.sectionHeader}>Quick Healthcare Actions</Text>
-        
         <View style={styles.gridRow}>
-          {/* Hospitals - Click navigates to the Open Now search logic */}
           <TouchableOpacity style={styles.gridCard} onPress={() => navigation.navigate('NearbyResources')}>
             <View style={[styles.gridIcon, { backgroundColor: '#FEE2E2' }]}>
               <MaterialCommunityIcons name="hospital-building" size={24} color="#DC2626" />
@@ -249,8 +240,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             <Text style={styles.gridTitle}>Hospitals</Text>
             <Text style={styles.gridSub}>Nearby Facilities</Text>
           </TouchableOpacity>
-
-          {/* Ambulance */}
           <TouchableOpacity style={styles.gridCard} onPress={() => navigation.navigate('EmergencyTracking')}>
             <View style={[styles.gridIcon, { backgroundColor: '#E0F2FE' }]}>
               <MaterialCommunityIcons name="ambulance" size={24} color="#0284C7" />
@@ -259,18 +248,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             <Text style={styles.gridSub}>Track Status</Text>
           </TouchableOpacity>
         </View>
-
-        <View style={styles.gridRow}>
-           {/* First Aid */}
-           <TouchableOpacity style={styles.gridCard} onPress={() => Alert.alert('Guide', 'First Aid Guide Coming Soon')}>
+        
+         <View style={styles.gridRow}>
+            <TouchableOpacity style={styles.gridCard} onPress={() => Alert.alert('Guide', 'First Aid Guide Coming Soon')}>
             <View style={[styles.gridIcon, { backgroundColor: '#DCFCE7' }]}>
               <MaterialCommunityIcons name="medical-bag" size={24} color="#16A34A" />
             </View>
             <Text style={styles.gridTitle}>First Aid</Text>
             <Text style={styles.gridSub}>Emergency Guide</Text>
           </TouchableOpacity>
-
-          {/* Volunteer */}
           <TouchableOpacity style={styles.gridCard} onPress={() => navigation.navigate('BecomeResponder')}>
             <View style={[styles.gridIcon, { backgroundColor: '#F3E8FF' }]}>
               <MaterialCommunityIcons name="hand-heart" size={24} color="#9333EA" />
@@ -279,10 +265,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
             <Text style={styles.gridSub}>Join Network</Text>
           </TouchableOpacity>
         </View>
-
       </ScrollView>
 
-      {/* ================= FOOTER ================= */}
       <View style={[styles.footer, { backgroundColor: '#DC2626' }]}>
         <TouchableOpacity onPress={() => Linking.openURL('tel:108')}>
           <Text style={styles.footerLink}>Call Ambulance (108)</Text>
@@ -293,7 +277,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         </TouchableOpacity>
       </View>
 
-      {/* ================= MAP MODAL ================= */}
       <Modal animationType="slide" visible={modalVisible} onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
@@ -333,10 +316,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 
 const styles = StyleSheet.create({
   mainContainer: { flex: 1, backgroundColor: '#F8FAFC' },
-
-  // --- HEADER ---
   headerContainer: {
-    backgroundColor: '#DC2626', // High Intensity Red
+    backgroundColor: '#DC2626',
     paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 50,
     paddingBottom: 20, paddingHorizontal: 20,
     borderBottomLeftRadius: 0, borderBottomRightRadius: 0,
@@ -348,62 +329,41 @@ const styles = StyleSheet.create({
   logoIconBg: { width: 24, height: 24, borderRadius: 4, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', marginRight: 8 },
   appName: { fontSize: 22, color: '#fff', fontWeight: '400' },
   appNameBold: { fontWeight: '800' },
-
   locationPill: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.1)', 
     paddingVertical: 5, paddingHorizontal: 10, borderRadius: 12,
     alignSelf: 'flex-start', maxWidth: '95%'
   },
   locationText: { fontSize: 13, color: '#FFFFFF', fontWeight: '600', maxWidth: 200 },
-
   profileBtn: { 
     width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)', 
     justifyContent: 'center', alignItems: 'center', marginTop: 4 
   },
   profileInitials: { fontSize: 16, fontWeight: '700', color: '#fff' },
-
   scrollContent: { padding: 20, paddingBottom: 60, paddingTop: 40 },
-
-  // --- SOS BUTTON (NEW DESIGN) ---
   sosWrapper: { alignItems: 'center', justifyContent: 'center', height: 220, marginBottom: 30 },
-  
-  // The Pulse Ring
   pulseRing: { 
     position: 'absolute', 
     width: 210, height: 210, borderRadius: 105,
-    backgroundColor: 'rgba(220, 38, 38, 0.15)', // Light red pulse
-    borderWidth: 1, borderColor: 'rgba(220, 38, 38, 0.1)'
+    backgroundColor: 'rgba(220, 38, 38, 0.15)', borderWidth: 1, borderColor: 'rgba(220, 38, 38, 0.1)'
   },
-  
-  // The Button
   sosBtn: {
     width: 160, height: 160, borderRadius: 80,
-    backgroundColor: '#DC2626', // Pure Red
-    justifyContent: 'center', alignItems: 'center', 
-    // High Proper CSS (Elevation/Shadow)
-    elevation: 12, 
-    shadowColor: '#DC2626', shadowOffset: { width: 0, height: 8 },
+    backgroundColor: '#DC2626', justifyContent: 'center', alignItems: 'center', 
+    elevation: 12, shadowColor: '#DC2626', shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.5, shadowRadius: 16,
-    borderWidth: 4, borderColor: '#FCA5A5', // Lighter red border
+    borderWidth: 4, borderColor: '#FCA5A5'
   },
   sosContent: { alignItems: 'center' },
   sosText: { fontSize: 40, fontWeight: '900', color: '#fff', letterSpacing: 2 },
   sosSub: { fontSize: 11, color: '#FEE2E2', fontWeight: '700', marginTop: 0 },
-
-  // --- TYPES (FIXED) ---
   typeGrid: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 30 },
   typeCard: { 
-    alignItems: 'center', width: '23%', 
-    backgroundColor: '#FFFFFF', // Default White
-    paddingVertical: 14, 
-    borderRadius: 18, 
-    borderWidth: 1, borderColor: '#F1F5F9', // Default Border
-    elevation: 3, shadowColor: '#94A3B8', shadowOpacity: 0.1,
-    shadowOffset: { width: 0, height: 2 }
+    alignItems: 'center', width: '23%', backgroundColor: '#FFFFFF', paddingVertical: 14, 
+    borderRadius: 18, borderWidth: 1, borderColor: '#F1F5F9', elevation: 3, 
+    shadowColor: '#94A3B8', shadowOpacity: 0.1, shadowOffset: { width: 0, height: 2 }
   },
-  typeLabel: { fontSize: 11, fontWeight: '600', color: '#64748B' }, // Default Text Color
-
-  // --- QUICK ACTIONS ---
+  typeLabel: { fontSize: 11, fontWeight: '600', color: '#64748B' },
   sectionHeader: { fontSize: 17, fontWeight: '700', color: '#334155', marginBottom: 15, marginLeft: 4 },
   gridRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
   gridCard: {
@@ -413,13 +373,9 @@ const styles = StyleSheet.create({
   gridIcon: { width: 48, height: 48, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
   gridTitle: { fontSize: 15, fontWeight: '700', color: '#1E293B' },
   gridSub: { fontSize: 12, color: '#64748B', marginTop: 2 },
-
-  // --- FOOTER ---
   footer: { paddingVertical: 12, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', position: 'absolute', bottom: 0, left: 0, right: 0 },
   footerLink: { color: '#fff', fontSize: 12, fontWeight: '700', paddingHorizontal: 12 },
   footerDivider: { color: 'rgba(255,255,255,0.4)', fontSize: 14 },
-
-  // --- MODAL ---
   modalContainer: { flex: 1, backgroundColor: '#fff' },
   modalHeader: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 15, flexDirection: 'row', alignItems: 'center' },
   closeModalBtn: { marginRight: 15 },

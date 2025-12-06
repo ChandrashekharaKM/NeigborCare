@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,11 +6,19 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   Alert,
+  StatusBar,
+  Dimensions,
+  Platform // <--- ADDED THIS
 } from 'react-native';
+import MapView, { Marker, PROVIDER_DEFAULT } from 'react-native-maps';
+import { FontAwesome5 } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import apiService from '../services/api';
 import geolocationService from '../services/geolocation';
+import webSocketService from '../services/socket';
 import { Emergency } from '../types';
+
+const { width } = Dimensions.get('window');
 
 interface EmergencyTrackingScreenProps {
   navigation: any;
@@ -28,11 +36,43 @@ export const EmergencyTrackingScreen: React.FC<EmergencyTrackingScreenProps> = (
   const [responderInfo, setResponderInfo] = useState<any>(null);
   const [distance, setDistance] = useState<number | null>(null);
   const [eta, setEta] = useState<string | null>(null);
+  
+  // Responder's Live Location (from Socket)
+  const [responderLocation, setResponderLocation] = useState<any>(null);
+  const mapRef = useRef<MapView>(null);
 
   useEffect(() => {
     loadEmergencyStatus();
-    const interval = setInterval(loadEmergencyStatus, 3000); // Poll every 3 seconds
-    return () => clearInterval(interval);
+    
+    // Connect Socket
+    if (authState.user) webSocketService.connect(authState.user.id);
+
+    // Listen for Acceptance
+    webSocketService.onResponderAccepted((data) => {
+        Alert.alert("Help is on the way!", "A nearby responder has accepted your alert.");
+        loadEmergencyStatus();
+    });
+
+    // Listen for Responder Movement
+    webSocketService.onResponderLocationUpdate((data) => {
+        console.log("📍 Moving Responder:", data);
+        setResponderLocation({ latitude: data.latitude, longitude: data.longitude });
+        
+        // Update Distance/ETA locally
+        if (emergency) {
+            const dist = geolocationService.calculateDistance(
+                emergency.latitude, emergency.longitude, 
+                data.latitude, data.longitude
+            );
+            setDistance(dist);
+            setEta(`${geolocationService.calculateETA(dist)} mins`);
+        }
+    });
+
+    return () => {
+        webSocketService.off('responder_accepted');
+        webSocketService.off('responder_location_update');
+    };
   }, []);
 
   const loadEmergencyStatus = async () => {
@@ -42,27 +82,14 @@ export const EmergencyTrackingScreen: React.FC<EmergencyTrackingScreenProps> = (
 
       if (status.responder) {
         setResponderInfo(status.responder);
-
-        // Calculate distance and ETA
-        const userLocation = await geolocationService.getCurrentLocation();
-        if (userLocation && status.responder.latitude && status.responder.longitude) {
-          const dist = geolocationService.calculateDistance(
-            userLocation.latitude,
-            userLocation.longitude,
-            status.responder.latitude,
-            status.responder.longitude
-          );
-          setDistance(dist);
-
-          const minutes = geolocationService.calculateETA(dist);
-          setEta(`${minutes} mins`);
+        // Set initial responder location
+        if (status.responder.latitude) {
+            setResponderLocation({
+                latitude: status.responder.latitude,
+                longitude: status.responder.longitude
+            });
         }
       }
-
-      if (status.emergency.status === 'resolved') {
-        setLoading(false);
-      }
-
       setLoading(false);
     } catch (error) {
       console.error('Error loading emergency status:', error);
@@ -81,11 +108,7 @@ export const EmergencyTrackingScreen: React.FC<EmergencyTrackingScreenProps> = (
           onPress: async () => {
             try {
               await apiService.resolveEmergency(emergencyId);
-              Alert.alert(
-                'Success',
-                'Emergency resolved. Thank you for using NeighborCare!',
-                [{ text: 'OK', onPress: () => navigation.goBack() }]
-              );
+              Alert.alert('Success', 'Emergency resolved.', [{ text: 'OK', onPress: () => navigation.goBack() }]);
             } catch (error) {
               Alert.alert('Error', 'Failed to resolve emergency');
             }
@@ -95,338 +118,134 @@ export const EmergencyTrackingScreen: React.FC<EmergencyTrackingScreenProps> = (
     );
   };
 
-  if (loading && !emergency) {
+  if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#e74c3c" />
-        <Text style={styles.loadingText}>Loading emergency status...</Text>
-      </View>
-    );
-  }
-
-  if (!emergency) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.errorText}>Emergency not found</Text>
+        <ActivityIndicator size="large" color="#DC2626" />
+        <Text style={styles.loadingText}>Connecting to network...</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      
+      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={styles.backButton}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>Emergency Details</Text>
-        <View style={{ width: 40 }} />
+        <Text style={styles.headerTitle}>Emergency Tracking</Text>
+        <View style={{width:40}} />
       </View>
 
-      {/* Emergency Type */}
-      <View style={styles.emergencyCard}>
-        <Text style={styles.emergencyType}>{emergency.emergency_type}</Text>
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(emergency.status) }]}>
-          <Text style={styles.statusText}>{emergency.status.toUpperCase()}</Text>
-        </View>
+      {/* MAP AREA */}
+      <View style={styles.mapContainer}>
+        <MapView
+            ref={mapRef}
+            style={styles.map}
+            provider={PROVIDER_DEFAULT}
+            showsUserLocation={true}
+            initialRegion={{
+                latitude: emergency?.latitude || 12.9716,
+                longitude: emergency?.longitude || 77.5946,
+                latitudeDelta: 0.02,
+                longitudeDelta: 0.02,
+            }}
+        >
+            {/* User Marker */}
+            {emergency && (
+                <Marker coordinate={{latitude: emergency.latitude, longitude: emergency.longitude}} title="You">
+                    <View style={styles.userMarker}>
+                        <FontAwesome5 name="user" size={16} color="#fff" />
+                    </View>
+                </Marker>
+            )}
+
+            {/* Responder Marker (Moving) */}
+            {responderLocation && (
+                <Marker coordinate={responderLocation} title="Responder">
+                    <View style={styles.responderMarker}>
+                         <FontAwesome5 name="ambulance" size={16} color="#fff" />
+                    </View>
+                </Marker>
+            )}
+        </MapView>
       </View>
 
-      {/* Responder Info */}
-      {responderInfo ? (
-        <View style={styles.responderCard}>
-          <Text style={styles.sectionTitle}>🚑 Responder Assigned</Text>
-
-          <View style={styles.responderInfo}>
-            <View style={styles.responderAvatar}>
-              <Text style={styles.avatarText}>
-                {responderInfo.name?.[0].toUpperCase() || 'R'}
-              </Text>
+      {/* INFO SHEET */}
+      <View style={styles.infoSheet}>
+        
+        {responderInfo ? (
+            <>
+                <Text style={styles.statusTitle}>Responder En Route</Text>
+                <View style={styles.responderRow}>
+                    <View style={styles.avatar}>
+                        <Text style={styles.avatarText}>{responderInfo.name[0]}</Text>
+                    </View>
+                    <View style={{flex: 1}}>
+                        <Text style={styles.respName}>{responderInfo.name}</Text>
+                        <Text style={styles.respRole}>Certified Responder</Text>
+                    </View>
+                    <View style={styles.etaBadge}>
+                        <Text style={styles.etaText}>{eta || 'Calculating...'}</Text>
+                    </View>
+                </View>
+                <Text style={styles.distText}>{distance ? `${distance}m away` : ''}</Text>
+            </>
+        ) : (
+            <View style={styles.searchingBox}>
+                <ActivityIndicator color="#DC2626" />
+                <Text style={styles.searchingText}>Alerting nearby responders...</Text>
             </View>
+        )}
 
-            <View style={styles.responderDetails}>
-              <Text style={styles.responderName}>{responderInfo.name}</Text>
-              <Text style={styles.responderType}>
-                {responderInfo.certification_type || 'Certified Responder'}
-              </Text>
-            </View>
-          </View>
-
-          {distance !== null && eta && (
-            <View style={styles.etaContainer}>
-              <Text style={styles.etaLabel}>Estimated Arrival</Text>
-              <Text style={styles.etaValue}>{eta}</Text>
-              <Text style={styles.distanceText}>
-                {geolocationService.formatDistance(distance)} away
-              </Text>
-            </View>
-          )}
-
-          {emergency.status === 'in-progress' && (
-            <View style={styles.liveTracking}>
-              <Text style={styles.liveText}>● Live Tracking Active</Text>
-              <Text style={styles.trackingNote}>
-                The responder is on their way to you. Your location is being shared in real-time.
-              </Text>
-            </View>
-          )}
-        </View>
-      ) : emergency.status === 'pending' ? (
-        <View style={styles.pendingCard}>
-          <ActivityIndicator color="#e74c3c" size="large" />
-          <Text style={styles.pendingText}>Finding nearby responders...</Text>
-        </View>
-      ) : null}
-
-      {/* Emergency Location */}
-      <View style={styles.locationCard}>
-        <Text style={styles.sectionTitle}>📍 Emergency Location</Text>
-        <Text style={styles.coordinateText}>
-          {emergency.latitude.toFixed(4)}, {emergency.longitude.toFixed(4)}
-        </Text>
-        <Text style={styles.createdTime}>
-          Created: {new Date(emergency.created_at).toLocaleTimeString()}
-        </Text>
-      </View>
-
-      {/* Action Button */}
-      {emergency.status === 'in-progress' && (
-        <TouchableOpacity style={styles.resolveButton} onPress={handleResolveEmergency}>
-          <Text style={styles.resolveButtonText}>Resolve Emergency</Text>
+        <TouchableOpacity style={styles.resolveBtn} onPress={handleResolveEmergency}>
+            <Text style={styles.resolveText}>I AM SAFE (RESOLVE)</Text>
         </TouchableOpacity>
-      )}
 
-      {emergency.status === 'resolved' && (
-        <View style={styles.resolvedContainer}>
-          <Text style={styles.resolvedEmoji}>✅</Text>
-          <Text style={styles.resolvedText}>Emergency Resolved</Text>
-          <Text style={styles.resolvedSubtext}>
-            Thank you for using NeighborCare. Your incident has been logged.
-          </Text>
-        </View>
-      )}
+      </View>
     </View>
   );
 };
 
-function getStatusColor(status: string): string {
-  switch (status) {
-    case 'pending':
-      return '#f8d7da';
-    case 'in-progress':
-      return '#fff3cd';
-    case 'resolved':
-      return '#d4edda';
-    default:
-      return '#e9ecef';
-  }
-}
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-    paddingHorizontal: 15,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f5f5f5',
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 14,
-    color: '#999',
-  },
+  container: { flex: 1, backgroundColor: '#fff' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  loadingText: { marginTop: 10, color: '#666' },
+
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 15,
-    marginBottom: 20,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight! + 10 : 50,
+    paddingBottom: 15, paddingHorizontal: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    backgroundColor: '#DC2626', elevation: 4
   },
-  backButton: {
-    color: '#e74c3c',
-    fontSize: 16,
-    fontWeight: '600',
+  backButton: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  headerTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+
+  mapContainer: { flex: 1 },
+  map: { width: '100%', height: '100%' },
+
+  userMarker: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#3B82F6', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
+  responderMarker: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#DC2626', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
+
+  infoSheet: {
+    padding: 20, backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    elevation: 20, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10
   },
-  title: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  emergencyCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 15,
-    marginBottom: 15,
-    alignItems: 'center',
-  },
-  emergencyType: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#e74c3c',
-    marginBottom: 10,
-  },
-  statusBadge: {
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#333',
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 12,
-  },
-  responderCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 15,
-    marginBottom: 15,
-  },
-  responderInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  responderAvatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#e74c3c',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 15,
-  },
-  avatarText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  responderDetails: {
-    flex: 1,
-  },
-  responderName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
-  responderType: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 4,
-  },
-  etaContainer: {
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
-    alignItems: 'center',
-  },
-  etaLabel: {
-    fontSize: 12,
-    color: '#999',
-  },
-  etaValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#e74c3c',
-    marginVertical: 4,
-  },
-  distanceText: {
-    fontSize: 12,
-    color: '#666',
-  },
-  liveTracking: {
-    backgroundColor: '#e8f5e9',
-    borderRadius: 8,
-    padding: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: '#4caf50',
-  },
-  liveText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#2e7d32',
-    marginBottom: 6,
-  },
-  trackingNote: {
-    fontSize: 12,
-    color: '#558b2f',
-    lineHeight: 18,
-  },
-  pendingCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 30,
-    marginBottom: 15,
-    alignItems: 'center',
-  },
-  pendingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: '#999',
-    fontWeight: '600',
-  },
-  locationCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 15,
-    marginBottom: 15,
-  },
-  coordinateText: {
-    fontSize: 13,
-    color: '#666',
-    fontFamily: 'monospace',
-    marginBottom: 8,
-  },
-  createdTime: {
-    fontSize: 12,
-    color: '#999',
-  },
-  resolveButton: {
-    backgroundColor: '#4caf50',
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  resolveButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  resolvedContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 30,
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  resolvedEmoji: {
-    fontSize: 48,
-    marginBottom: 12,
-  },
-  resolvedText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#2e7d32',
-    marginBottom: 8,
-  },
-  resolvedSubtext: {
-    fontSize: 14,
-    color: '#999',
-    textAlign: 'center',
-  },
-  errorText: {
-    fontSize: 16,
-    color: '#e74c3c',
-    marginTop: 20,
-  },
+  statusTitle: { fontSize: 18, fontWeight: 'bold', color: '#1E293B', marginBottom: 15 },
+  responderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  avatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#F1F5F9', justifyContent: 'center', alignItems: 'center', marginRight: 15 },
+  avatarText: { fontSize: 20, fontWeight: 'bold', color: '#64748B' },
+  respName: { fontSize: 16, fontWeight: '700', color: '#1E293B' },
+  respRole: { fontSize: 12, color: '#64748B' },
+  etaBadge: { backgroundColor: '#FEF2F2', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
+  etaText: { color: '#DC2626', fontWeight: 'bold' },
+  distText: { color: '#64748B', marginBottom: 20 },
+
+  searchingBox: { alignItems: 'center', padding: 20 },
+  searchingText: { marginTop: 10, color: '#64748B', fontStyle: 'italic' },
+
+  resolveBtn: { backgroundColor: '#22C55E', padding: 16, borderRadius: 12, alignItems: 'center' },
+  resolveText: { color: '#fff', fontWeight: 'bold' },
 });

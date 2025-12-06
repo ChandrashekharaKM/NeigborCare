@@ -180,6 +180,36 @@ class APIService {
     }
   }
 
+  // --- ADMIN EXAM MANAGEMENT ---
+  
+  async getExamQuestions() {
+    try {
+      const response = await this.api.get('/api/admin/exam-questions');
+      return response.data.questions || [];
+    } catch (error) {
+      console.error('Fetch Questions Error:', error);
+      return [];
+    }
+  }
+
+  async addExamQuestion(question: string, option: string) {
+    try {
+      const response = await this.api.post('/api/admin/exam-questions', { question, option });
+      return response.data.questions;
+    } catch (error) {
+      throw new Error('Failed to add question');
+    }
+  }
+
+  async deleteExamQuestion(questionId: string) {
+    try {
+      const response = await this.api.delete(`/api/admin/exam-questions/${questionId}`);
+      return response.data.questions;
+    } catch (error) {
+      throw new Error('Failed to delete question');
+    }
+  }
+
   async getNearbyResources(latitude: number, longitude: number, radiusInMeters: number = 5000) {
     try {
       const response = await this.api.get('/api/resources/nearby', {

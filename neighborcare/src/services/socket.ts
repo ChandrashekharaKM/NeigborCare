@@ -1,6 +1,7 @@
 import io, { Socket } from 'socket.io-client';
+import { Platform } from 'react-native';
 
-// ✅ Correct IP for your current setup
+// ⚠️ REPLACE WITH YOUR COMPUTER'S EXACT IP ADDRESS
 const MANUAL_IP = '192.168.0.174'; 
 const SOCKET_URL = `http://${MANUAL_IP}:5000`;
 
@@ -37,46 +38,46 @@ class WebSocketService {
     }
   }
 
-  // --- EMITTERS (Sending Data to Server) ---
+  // --- EMITTERS (Sending Data) ---
 
-  // Used in HomeScreen.tsx
+  // User sends SOS
   emitCreateEmergency(data: any) {
     this.socket?.emit('create_emergency', data);
   }
 
-  // Used in ResponderDashboardScreen.tsx
+  // Responder goes Online/Offline
   emitResponderAvailability(userId: string, isAvailable: boolean) {
     this.socket?.emit('set_responder_available', { userId, is_available: isAvailable });
   }
 
-  // Used in ResponderDashboardScreen.tsx
+  // Responder Accepts
   emitAcceptEmergency(emergencyId: string, responderId: string) {
     this.socket?.emit('accept_emergency', { emergency_id: emergencyId, responder_id: responderId });
   }
 
-  // Used in ResponderDashboardScreen.tsx (Tracking)
+  // Responder updates GPS
   emitLocationUpdate(emergencyId: string, latitude: number, longitude: number) {
     this.socket?.emit('update_location', { emergency_id: emergencyId, latitude, longitude });
   }
 
-  // --- LISTENERS (Receiving Data from Server) ---
+  // --- LISTENERS (Receiving Data) ---
 
-  // Responder sees this (ResponderDashboardScreen.tsx)
+  // Responder listens for new SOS
   onEmergencyAlert(callback: (data: any) => void) {
     this.socket?.on('emergency_alert', callback);
   }
 
-  // User sees this (EmergencyTrackingScreen.tsx)
+  // User listens for Responder Acceptance
   onResponderAccepted(callback: (data: any) => void) {
     this.socket?.on('responder_accepted', callback);
   }
 
-  // User sees this (EmergencyTrackingScreen.tsx)
+  // User listens for Responder Movement
   onResponderLocationUpdate(callback: (data: any) => void) {
     this.socket?.on('responder_location_update', callback);
   }
 
-  // Cleanup listeners to prevent duplicates
+  // Cleanup listeners
   off(event: string) {
     this.socket?.off(event);
   }
