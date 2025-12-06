@@ -15,6 +15,12 @@ import { ResponderExamScreen } from '../screens/ResponderExamScreen';
 import { NearbyResourcesScreen } from '../screens/NearbyResourcesScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { EmergencyHistoryScreen } from '../screens/EmergencyHistoryScreen';
+import { MedicalRecordsScreen } from '../screens/MedicalRecordsScreen'; 
+import { PrivacySecurityScreen } from '../screens/PrivacySecurityScreen';
+
+// --- ADD THESE IMPORTS ---
+import { EmergencyContactsScreen } from '../screens/EmergencyContactsScreen';
+import { HelpSupportScreen } from '../screens/HelpSupportScreen';
 
 import { useAuth } from '../context/AuthContext';
 
@@ -31,7 +37,6 @@ export const RootNavigator: React.FC = () => {
     );
   }
 
-  // Generate a unique key to force re-render on role change
   const getStackKey = () => {
     if (!state.user) return 'guest';
     if (state.user.is_admin) return 'admin';
@@ -50,41 +55,33 @@ export const RootNavigator: React.FC = () => {
             // === AUTHENTICATED STACK ===
             <Stack.Group>
               
-              {/* --- 1. ADMIN ROLE --- */}
+              {/* --- ADMIN --- */}
               {state.user.is_admin ? (
                 <>
-                  {/* Start Screen for Admin */}
                   <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
-                  {/* Admin can also view profiles */}
                   <Stack.Screen name="UserProfile" component={ProfileScreen} />
                 </>
               ) : state.user.is_responder ? (
-                // --- 2. RESPONDER ROLE ---
+                // --- RESPONDER ---
                 <>
-                  {/* Check Certification Status */}
                   {state.user.exam_passed ? (
                     <Stack.Screen name="ResponderDashboard" component={ResponderDashboardScreen} />
                   ) : (
-                    <Stack.Screen 
-                      name="ResponderExam" 
-                      component={ResponderExamScreen}
-                      options={{ gestureEnabled: false }}
-                    />
+                    <Stack.Screen name="ResponderExam" component={ResponderExamScreen} options={{ gestureEnabled: false }} />
                   )}
-                  
-                  {/* Responders can also act as users (e.g. view history, resources) */}
                   <Stack.Screen name="Home" component={HomeScreen} />
+                  
+                  {/* Responder Placeholders */}
                   <Stack.Screen name="ResponseHistory" component={PlaceholderScreen} />
                   <Stack.Screen name="Certification" component={PlaceholderScreen} />
                   <Stack.Screen name="RespondingEmergency" component={PlaceholderScreen} />
                   
-                  {/* If they haven't passed, they might need to access this if forced */}
                   {!state.user.exam_passed && (
                      <Stack.Screen name="ResponderDashboard" component={ResponderDashboardScreen} />
                   )}
                 </>
               ) : (
-                // --- 3. REGULAR USER ROLE ---
+                // --- REGULAR USER ---
                 <>
                   <Stack.Screen name="Home" component={HomeScreen} />
                   <Stack.Screen name="BecomeResponder" component={BecomeResponderScreen} />
@@ -92,15 +89,18 @@ export const RootNavigator: React.FC = () => {
                 </>
               )}
 
-              {/* --- 4. SHARED SCREENS (Available to Everyone) --- */}
-              {/* These are screens anyone might need (Profile, Maps, etc.) */}
-              {/* Note: Do NOT add AdminDashboard or ResponderDashboard here again */}
-              
+              {/* --- SHARED SCREENS (Accessible by all roles) --- */}
               <Stack.Screen name="Profile" component={ProfileScreen} />
               <Stack.Screen name="EmergencyTracking" component={EmergencyTrackingScreen} />
               <Stack.Screen name="NearbyResources" component={NearbyResourcesScreen} />
               <Stack.Screen name="EmergencyHistory" component={EmergencyHistoryScreen} />
               
+              {/* NEW SCREENS */}
+              <Stack.Screen name="MedicalRecords" component={MedicalRecordsScreen} /> 
+              <Stack.Screen name="PrivacySecurity" component={PrivacySecurityScreen} />
+              <Stack.Screen name="EmergencyContacts" component={EmergencyContactsScreen} /> 
+              <Stack.Screen name="HelpSupport" component={HelpSupportScreen} />
+
               {/* Shared Placeholders */}
               <Stack.Screen name="EmergencyDetail" component={EmergencyTrackingScreen} />
               <Stack.Screen name="ConductExam" component={ResponderExamScreen} />
