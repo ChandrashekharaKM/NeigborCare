@@ -37,12 +37,13 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
   // --- STATE ---
   const [isAvailable, setIsAvailable] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [activeMission, setActiveMission] = useState<any>(null); 
+  
   const [stats, setStats] = useState({
     successful_responses: 0,
     emergency_alerts_received: 0,
     total_lives_helped: 0,
   });
+  
   const [location, setLocation] = useState<LocationData | null>(null);
   const [medicalResources, setMedicalResources] = useState<any[]>([]);
   const [resourcesLoading, setResourcesLoading] = useState(false);
@@ -63,7 +64,7 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
     // ⚡ LISTEN FOR REAL-TIME ALERTS ⚡
     webSocketService.onEmergencyAlert((data) => {
         console.log("🚨 REAL-TIME ALERT RECEIVED:", data);
-        if (isAvailable && !activeMission) {
+        if (isAvailable) {
             Alert.alert(
                 "🚨 EMERGENCY ALERT",
                 `${data.emergency_type} reported nearby.\nVictim: ${data.user_name}`,
@@ -79,7 +80,7 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
         geolocationService.stopLocationTracking(); 
         webSocketService.off('emergency_alert'); // Cleanup listener
     };
-  }, [isAvailable, activeMission]);
+  }, [isAvailable]);
 
   // 2. ON LOCATION CHANGE
   useEffect(() => {
@@ -194,58 +195,43 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
     }
   };
 
+  // ✅ CRITICAL: ACCEPT & NAVIGATE TO TRACKER
   const startMission = async (data: any) => {
-    // 1. Notify Server we accepted
-    await apiService.acceptEmergency(data.emergency_id, authState.user!.id);
-    webSocketService.emitAcceptEmergency(data.emergency_id, authState.user!.id);
+    try {
+        // 1. Notify Server we accepted
+        await apiService.acceptEmergency(data.emergency_id, authState.user!.id);
+        
+        // 2. Notify Victim via Socket
+        webSocketService.emitAcceptEmergency(data.emergency_id, authState.user!.id);
 
-    // 2. Set Mission State
-    const missionData = {
-        id: data.emergency_id,
-        victimName: data.user_name,
-        type: data.emergency_type,
-        location: {
-            latitude: data.latitude,
-            longitude: data.longitude,
-            address: "Locating..." 
-        }
-    };
-    setActiveMission(missionData);
+        // 3. Start Broadcasting Location
+        geolocationService.startLocationTracking((newLoc) => {
+            setLocation(newLoc);
+            webSocketService.emitLocationUpdate(data.emergency_id, newLoc.latitude, newLoc.longitude);
+        });
 
-    // 3. Start Broadcasting My Location
-    geolocationService.startLocationTracking((newLoc) => {
-        setLocation(newLoc);
-        webSocketService.emitLocationUpdate(data.emergency_id, newLoc.latitude, newLoc.longitude);
-    });
+        // 4. Navigate to Tracking Screen
+        navigation.navigate('EmergencyTracking', { 
+            emergencyId: data.emergency_id,
+            isResponderView: true 
+        });
 
-    // 4. Zoom Map
-    if (location && mapRef.current) {
-        setTimeout(() => {
-            mapRef.current?.fitToCoordinates([
-                { latitude: location.latitude, longitude: location.longitude },
-                { latitude: missionData.location.latitude, longitude: missionData.location.longitude }
-            ], {
-                edgePadding: { top: 150, right: 50, bottom: 350, left: 50 },
-                animated: true,
-            });
-        }, 500);
+    } catch (error) {
+        Alert.alert("Error", "Failed to accept mission.");
     }
   };
 
-  const completeMission = () => {
-    Alert.alert("Mission Complete", "Great job! Stats updated.", [
-        { text: "OK", onPress: () => setActiveMission(null) }
-    ]);
-  };
-
-  const openGoogleMaps = () => {
-    if (!activeMission || !location) return;
-    const url = `https://www.google.com/maps/dir/?api=1&origin=${location.latitude},${location.longitude}&destination=${activeMission.location.latitude},${activeMission.location.longitude}&travelmode=driving`;
+  const openGoogleMaps = (targetLat: number, targetLng: number) => {
+    if (!location) return;
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${location.latitude},${location.longitude}&destination=${targetLat},${targetLng}&travelmode=driving`;
     Linking.openURL(url);
   };
 
   const renderResourceItem = ({ item }: { item: any }) => (
-    <View style={styles.resourceCard}>
+    <TouchableOpacity 
+      style={styles.resourceCard}
+      onPress={() => openGoogleMaps(item.latitude, item.longitude)}
+    >
       <View style={styles.resourceHeader}>
         <View style={styles.resourceIconBg}>
            <FontAwesome5 name="hospital" size={16} color="#DC2626" />
@@ -259,7 +245,7 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
       <View style={styles.distBadge}>
          <Text style={styles.resourceDistance}>{item.distance}m</Text>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 
   return (
@@ -289,6 +275,7 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
 
       {/* MAIN CONTENT */}
       <View style={{flex: 1}}>
+          
           {/* MAP */}
           <View style={styles.mapContainer}>
             <MapView
@@ -303,133 +290,114 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
                 latitudeDelta: 0.02,
                 longitudeDelta: 0.02,
                 }}
-            >
-                {activeMission && (
-                    <>
-                        <Marker coordinate={activeMission.location} title="Victim Location">
-                            <View style={styles.victimMarker}>
-                                <FontAwesome5 name="exclamation" size={20} color="#fff" />
-                            </View>
-                        </Marker>
-                        {location && (
-                            <Polyline 
-                                coordinates={[
-                                    { latitude: location.latitude, longitude: location.longitude },
-                                    { latitude: activeMission.location.latitude, longitude: activeMission.location.longitude }
-                                ]}
-                                strokeColor="#DC2626"
-                                strokeWidth={4}
-                                lineDashPattern={[1]}
-                            />
-                        )}
-                    </>
-                )}
-            </MapView>
+            />
 
-            <TouchableOpacity style={styles.gpsFab} onPress={handleRecenter} activeOpacity={0.8}>
+            {/* GPS RECENTER BUTTON */}
+            <TouchableOpacity 
+              style={styles.gpsFab} 
+              onPress={handleRecenter}
+              activeOpacity={0.8}
+            >
               <Ionicons name="navigate" size={22} color="#DC2626" />
             </TouchableOpacity>
+
           </View>
 
           {/* DASHBOARD */}
           <View style={styles.dashboardContainer}>
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-                {activeMission ? (
-                    <View style={styles.missionCard}>
-                        <View style={styles.missionHeader}>
-                            <Text style={styles.missionTitle}>🚑 ACTIVE MISSION</Text>
-                            <Text style={styles.missionTime}>00:00 mins elapsed</Text>
+                
+                {/* Status Card */}
+                <View style={styles.statusCard}>
+                    <View style={styles.statusInfo}>
+                        <Text style={styles.statusLabel}>Duty Status</Text>
+                        <View style={styles.statusBadgeRow}>
+                            <View style={[styles.statusDot, { backgroundColor: isAvailable ? '#22C55E' : '#94A3B8' }]} />
+                            <Text style={[styles.statusText, { color: isAvailable ? '#15803D' : '#64748B' }]}>
+                                {isAvailable ? 'Active & Scanning' : 'Offline'}
+                            </Text>
                         </View>
-                        <View style={styles.missionInfo}>
-                            <View style={{flex:1}}>
-                                <Text style={styles.victimName}>{activeMission.victimName}</Text>
-                                <Text style={styles.victimType}>{activeMission.type}</Text>
-                                <Text style={styles.victimAddress}>{activeMission.location.address}</Text>
-                            </View>
-                            <TouchableOpacity style={styles.navBtn} onPress={openGoogleMaps}>
-                                <FontAwesome5 name="directions" size={24} color="#fff" />
-                            </TouchableOpacity>
-                        </View>
-                        <TouchableOpacity style={styles.completeBtn} onPress={completeMission}>
-                            <Text style={styles.completeBtnText}>REPORT ARRIVAL / COMPLETE</Text>
-                        </TouchableOpacity>
                     </View>
+                    {loading ? (
+                        <ActivityIndicator size="small" color="#DC2626" />
+                    ) : (
+                        <Switch
+                            value={isAvailable}
+                            onValueChange={handleAvailabilityToggle}
+                            trackColor={{ false: '#E2E8F0', true: '#DC2626' }}
+                            thumbColor={'#fff'}
+                            style={{ transform: [{ scaleX: 1.1 }, { scaleY: 1.1 }] }}
+                        />
+                    )}
+                </View>
+
+                {/* Stats Grid */}
+                <View style={styles.statsRow}>
+                    <View style={styles.statCard}>
+                        <View style={[styles.statIconBg, { backgroundColor: '#F0F9FF' }]}>
+                            <MaterialCommunityIcons name="ambulance" size={24} color="#0284C7" />
+                        </View>
+                        <Text style={styles.statValue}>{stats.successful_responses}</Text>
+                        <Text style={styles.statLabel}>Responded</Text>
+                    </View>
+                    <View style={styles.statCard}>
+                        <View style={[styles.statIconBg, { backgroundColor: '#FEF2F2' }]}>
+                            <MaterialCommunityIcons name="heart-pulse" size={24} color="#DC2626" />
+                        </View>
+                        <Text style={styles.statValue}>{stats.total_lives_helped}</Text>
+                        <Text style={styles.statLabel}>Lives</Text>
+                    </View>
+                    <View style={styles.statCard}>
+                        <View style={[styles.statIconBg, { backgroundColor: '#FFF7ED' }]}>
+                            <MaterialCommunityIcons name="bell-ring" size={24} color="#EA580C" />
+                        </View>
+                        <Text style={styles.statValue}>{stats.emergency_alerts_received}</Text>
+                        <Text style={styles.statLabel}>Alerts</Text>
+                    </View>
+                </View>
+
+                {/* Nearby Facilities */}
+                <View style={styles.sectionHeaderRow}>
+                    <Text style={styles.sectionHeader}>Nearby Facilities</Text>
+                    {location && (
+                        <TouchableOpacity onPress={() => fetchRealNearbyResources(location)}>
+                            <Ionicons name="refresh" size={20} color="#64748B" />
+                        </TouchableOpacity>
+                    )}
+                </View>
+
+                {resourcesLoading ? (
+                    <ActivityIndicator size="small" color="#DC2626" style={{ marginTop: 10 }} />
+                ) : medicalResources.length > 0 ? (
+                    <FlatList
+                        data={medicalResources}
+                        renderItem={renderResourceItem}
+                        keyExtractor={(item) => item.id}
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.resourcesList}
+                    />
                 ) : (
-                    <>
-                        <View style={styles.statusCard}>
-                            <View style={styles.statusInfo}>
-                                <Text style={styles.statusLabel}>Duty Status</Text>
-                                <View style={styles.statusBadgeRow}>
-                                    <View style={[styles.statusDot, { backgroundColor: isAvailable ? '#22C55E' : '#94A3B8' }]} />
-                                    <Text style={[styles.statusText, { color: isAvailable ? '#15803D' : '#64748B' }]}>
-                                        {isAvailable ? 'Active & Scanning' : 'Offline'}
-                                    </Text>
-                                </View>
-                            </View>
-                            {loading ? (
-                                <ActivityIndicator size="small" color="#DC2626" />
-                            ) : (
-                                <Switch
-                                    value={isAvailable}
-                                    onValueChange={handleAvailabilityToggle}
-                                    trackColor={{ false: '#E2E8F0', true: '#DC2626' }}
-                                    thumbColor={'#fff'}
-                                    style={{ transform: [{ scaleX: 1.1 }, { scaleY: 1.1 }] }}
-                                />
-                            )}
-                        </View>
-
-                        <View style={styles.statsRow}>
-                            <View style={styles.statCard}>
-                                <View style={[styles.statIconBg, { backgroundColor: '#F0F9FF' }]}>
-                                    <MaterialCommunityIcons name="ambulance" size={24} color="#0284C7" />
-                                </View>
-                                <Text style={styles.statValue}>{stats.successful_responses}</Text>
-                                <Text style={styles.statLabel}>Responded</Text>
-                            </View>
-                            <View style={styles.statCard}>
-                                <View style={[styles.statIconBg, { backgroundColor: '#FEF2F2' }]}>
-                                    <MaterialCommunityIcons name="heart-pulse" size={24} color="#DC2626" />
-                                </View>
-                                <Text style={styles.statValue}>{stats.total_lives_helped}</Text>
-                                <Text style={styles.statLabel}>Lives</Text>
-                            </View>
-                            <View style={styles.statCard}>
-                                <View style={[styles.statIconBg, { backgroundColor: '#FFF7ED' }]}>
-                                    <MaterialCommunityIcons name="bell-ring" size={24} color="#EA580C" />
-                                </View>
-                                <Text style={styles.statValue}>{stats.emergency_alerts_received}</Text>
-                                <Text style={styles.statLabel}>Alerts</Text>
-                            </View>
-                        </View>
-
-                        <View style={styles.sectionHeaderRow}>
-                            <Text style={styles.sectionHeader}>Nearby Facilities</Text>
-                            {location && (
-                                <TouchableOpacity onPress={() => fetchRealNearbyResources(location)}>
-                                    <Ionicons name="refresh" size={20} color="#64748B" />
-                                </TouchableOpacity>
-                            )}
-                        </View>
-
-                        {resourcesLoading ? (
-                            <ActivityIndicator size="small" color="#DC2626" style={{ marginTop: 10 }} />
-                        ) : medicalResources.length > 0 ? (
-                            <FlatList
-                                data={medicalResources}
-                                renderItem={renderResourceItem}
-                                keyExtractor={(item) => item.id}
-                                horizontal
-                                showsHorizontalScrollIndicator={false}
-                                contentContainerStyle={styles.resourcesList}
-                            />
-                        ) : (
-                            <View style={styles.emptyContainer}>
-                                <Text style={styles.emptyText}>Tap refresh to find nearby hospitals.</Text>
-                            </View>
-                        )}
-                    </>
+                    <View style={styles.emptyContainer}>
+                        <Text style={styles.emptyText}>Tap refresh to find nearby hospitals.</Text>
+                    </View>
                 )}
+
+                {/* Switch View Button (For Demo) */}
+                <View style={{marginTop: 20}}>
+                    <Text style={styles.sectionHeader}>Actions</Text>
+                    <TouchableOpacity 
+                        style={styles.actionRow}
+                        onPress={() => navigation.navigate('Home')} 
+                    >
+                        <View style={[styles.actionIcon, { backgroundColor: '#F3E8FF' }]}>
+                            <FontAwesome5 name="user" size={16} color="#9333EA" />
+                        </View>
+                        <Text style={styles.actionText}>Switch to User View</Text>
+                        <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
+                    </TouchableOpacity>
+                </View>
+
                 <View style={{height: 100}} />
             </ScrollView>
           </View>
@@ -445,6 +413,7 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
           <Text style={styles.footerLink}>Police (100)</Text>
         </TouchableOpacity>
       </View>
+
     </View>
   );
 };
@@ -479,6 +448,7 @@ const styles = StyleSheet.create({
 
   mapContainer: { height: '35%', width: '100%', overflow: 'hidden' }, 
   map: { width: '100%', height: '100%' },
+  
   gpsFab: {
     position: 'absolute', bottom: 35, right: 20,
     width: 44, height: 44, borderRadius: 22,
@@ -527,29 +497,12 @@ const styles = StyleSheet.create({
   emptyContainer: { alignItems: 'center', padding: 10 },
   emptyText: { color: '#94A3B8', fontStyle: 'italic', fontSize: 12 },
 
-  missionCard: {
-    backgroundColor: '#fff', borderRadius: 16, padding: 20, elevation: 5,
-    borderWidth: 1, borderColor: '#FEE2E2', marginBottom: 20
+  actionRow: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', 
+    padding: 16, borderRadius: 16, elevation: 2, marginBottom: 10
   },
-  missionHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', paddingBottom: 10 },
-  missionTitle: { fontSize: 14, fontWeight: '800', color: '#DC2626' },
-  missionTime: { fontSize: 12, color: '#64748B', fontWeight: '600' },
-  missionInfo: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  victimName: { fontSize: 18, fontWeight: '700', color: '#1E293B' },
-  victimType: { fontSize: 14, fontWeight: '600', color: '#DC2626', marginBottom: 4 },
-  victimAddress: { fontSize: 13, color: '#64748B', maxWidth: '80%' },
-  navBtn: { 
-    width: 50, height: 50, borderRadius: 25, backgroundColor: '#0284C7',
-    justifyContent: 'center', alignItems: 'center', elevation: 3
-  },
-  completeBtn: {
-    backgroundColor: '#22C55E', paddingVertical: 15, borderRadius: 12, alignItems: 'center'
-  },
-  completeBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
-  victimMarker: {
-    backgroundColor: '#DC2626', width: 36, height: 36, borderRadius: 18,
-    justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff'
-  },
+  actionIcon: { width: 36, height: 36, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  actionText: { flex: 1, fontSize: 15, fontWeight: '600', color: '#334155' },
 
   footer: { 
     paddingVertical: 12, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', 

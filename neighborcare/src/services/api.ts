@@ -5,7 +5,6 @@ import { Platform } from 'react-native';
 const getApiBaseUrl = () => {
   // ✅ YOUR IP ADDRESS
   const MANUAL_IP = '192.168.0.174'; 
-  
   return `http://${MANUAL_IP}:5000`;
 };
 
@@ -69,7 +68,15 @@ class APIService {
     }
   }
 
-  // --- TOKEN MANAGEMENT ---
+  async changePassword(userId: string, oldPassword: string, newPassword: string) {
+    try {
+      const response = await this.api.post('/api/auth/change-password', { userId, oldPassword, newPassword });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.error || 'Failed to change password');
+    }
+  }
+
   setAuthToken(token: string) {
     this.api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
   }
@@ -98,18 +105,11 @@ class APIService {
     }
   }
 
-  // --- RESPONDER STATUS (The specific fix) ---
-  async setResponderAvailability(userId: string, isAvailable: boolean, latitude?: number, longitude?: number) {
+  async updatePushToken(userId: string, token: string) {
     try {
-      const response = await this.api.put(`/api/responders/${userId}/availability`, {
-        is_available: isAvailable,
-        latitude,
-        longitude,
-      });
-      return response.data;
-    } catch (error: any) {
-      console.error("Set Status Error:", error.message);
-      throw error; // Let the UI handle the error
+      console.log(`Push token for ${userId}: ${token}`);
+    } catch (error) {
+      console.error("Push Token Error", error);
     }
   }
 
@@ -141,53 +141,11 @@ class APIService {
     }
   }
 
-  // --- EXAMS ---
-  async submitExam(examData: any) {
-    try {
-      const response = await this.api.post('/api/exams/submit', examData);
-      return response.data;
-    } catch (error: any) {
-      throw new Error(error.response?.data?.error || 'Failed to submit exam');
-    }
-  }
-
-  // --- EMERGENCY ---
-  async createEmergency(userId: string, latitude: number, longitude: number, emergencyType: string, description?: string) {
-    try {
-      const response = await this.api.post('/api/emergency/create', {
-        user_id: userId,
-        latitude,
-        longitude,
-        emergency_type: emergencyType,
-        description,
-      });
-      return response.data;
-    } catch (error) {
-      throw error;
-    }
-  }
-  // ... inside class APIService ...
-
-  // --- POLLING ---
-  async checkForResponderAlerts(responderId: string) {
-    try {
-      // Calls the new route we just made
-      const response = await this.api.get(`/api/responders/${responderId}/alerts`);
-      return response.data;
-    } catch (error) {
-      // Return false silently so the polling loop doesn't crash the app
-      return { hasAlert: false };
-    }
-  }
-
-  // --- ADMIN EXAM MANAGEMENT ---
-  
   async getExamQuestions() {
     try {
       const response = await this.api.get('/api/admin/exam-questions');
       return response.data.questions || [];
     } catch (error) {
-      console.error('Fetch Questions Error:', error);
       return [];
     }
   }
@@ -210,6 +168,91 @@ class APIService {
     }
   }
 
+  // --- RESPONDER ---
+  async setResponderAvailability(userId: string, isAvailable: boolean, latitude?: number, longitude?: number) {
+    try {
+      const response = await this.api.put(`/api/responders/${userId}/availability`, {
+        is_available: isAvailable,
+        latitude,
+        longitude,
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error("Set Status Error:", error.message);
+      throw error;
+    }
+  }
+
+  async checkForResponderAlerts(responderId: string) {
+    try {
+      const response = await this.api.get(`/api/responders/${responderId}/alerts`);
+      return response.data;
+    } catch (error) {
+      return { hasAlert: false };
+    }
+  }
+
+  // --- EXAMS ---
+  async submitExam(examData: any) {
+    try {
+      const response = await this.api.post('/api/exams/submit', examData);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.error || 'Failed to submit exam');
+    }
+  }
+
+  // --- EMERGENCY (CRITICAL FOR TRACKING) ---
+  
+  async createEmergency(userId: string, latitude: number, longitude: number, emergencyType: string, description?: string) {
+    try {
+      const response = await this.api.post('/api/emergency/create', {
+        user_id: userId,
+        latitude,
+        longitude,
+        emergency_type: emergencyType,
+        description,
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error("API SOS Error:", error.response?.data || error.message);
+      throw error;
+    }
+  }
+
+  // ✅ THIS WAS MISSING
+  async getEmergencyStatus(emergencyId: string) {
+    try {
+      const response = await this.api.get(`/api/emergency/${emergencyId}`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.error || 'Failed to get status');
+    }
+  }
+
+  // ✅ THIS WAS MISSING
+  async resolveEmergency(emergencyId: string) {
+    try {
+      const response = await this.api.post(`/api/emergency/${emergencyId}/resolve`);
+      return response.data;
+    } catch (error: any) {
+      throw new Error('Failed to resolve emergency');
+    }
+  }
+
+  // ✅ THIS WAS MISSING
+  async acceptEmergency(emergencyId: string, responderId: string) {
+    try {
+        const response = await this.api.post(`/api/emergency/${emergencyId}/accept`, {
+            responder_id: responderId
+        });
+        return response.data;
+    } catch (error: any) {
+        throw new Error('Failed to accept');
+    }
+  }
+
+  // --- RESOURCES ---
   async getNearbyResources(latitude: number, longitude: number, radiusInMeters: number = 5000) {
     try {
       const response = await this.api.get('/api/resources/nearby', {

@@ -27,7 +27,7 @@ router.post('/create', async (req: Request, res: Response) => {
 
     console.log(`🚨 SOS received from User ${user_id} at ${latitude}, ${longitude}`);
 
-    // 1. Create the Emergency Record first
+    // 1. Create the Emergency Record
     const emergency = await prisma.emergency.create({
       data: {
         user_id,
@@ -40,7 +40,6 @@ router.post('/create', async (req: Request, res: Response) => {
     });
 
     // 2. Find Available Responders
-    // Since we use SQLite, we fetch all ONLINE responders and filter in JS
     const allResponders = await prisma.user.findMany({
       where: {
         is_responder: true,
@@ -60,36 +59,40 @@ router.post('/create', async (req: Request, res: Response) => {
 
     let searchRadius = 500;
 
-    // 4. Fallback to 1km if no one found
+    // 4. Fallback to 2km if no one found
     if (selectedResponders.length === 0) {
-      console.log("⚠️ No responders in 500m. Expanding to 1km...");
-      searchRadius = 1000;
+      console.log("⚠️ No responders in 500m. Expanding to 2km...");
+      searchRadius = 2000;
       selectedResponders = allResponders.filter(r => {
         const dist = getDistanceInMeters(latitude, longitude, r.latitude!, r.longitude!);
-        return dist <= 1000;
+        return dist <= 2000;
       });
     }
 
     console.log(`✅ Notifying ${selectedResponders.length} responders within ${searchRadius}m`);
 
-    // 5. Create Alert Records for them (So their app can pull it)
+    // 5. Create Alert Records
     if (selectedResponders.length > 0) {
-      const alertData = selectedResponders.map(r => ({
-        emergency_id: emergency.id,
-        responder_id: r.id,
-        distance: Math.round(getDistanceInMeters(latitude, longitude, r.latitude!, r.longitude!)),
-        status: 'pending'
-      }));
-
-      await prisma.emergencyAlert.createMany({
-        data: alertData
-      });
+      await Promise.all(
+        selectedResponders.map(r => {
+          const dist = Math.round(getDistanceInMeters(latitude, longitude, r.latitude!, r.longitude!));
+          return prisma.emergencyAlert.create({
+            data: {
+              emergency_id: emergency.id,
+              responder_id: r.id,
+              distance: dist,
+              status: 'pending'
+            }
+          });
+        })
+      );
     }
 
+    // 6. Return Response (INCLUDING the 'emergency' object)
     res.json({ 
       success: true, 
       message: 'Emergency Created', 
-      emergencyId: emergency.id,
+      emergency: emergency, 
       respondersNotified: selectedResponders.length 
     });
 
@@ -104,12 +107,68 @@ router.get('/:id', async (req: Request, res: Response) => {
   try {
     const emergency = await prisma.emergency.findUnique({
       where: { id: req.params.id },
-      include: { responder: true }
+      include: { responder: true, user: true }
     });
-    res.json(emergency);
+    
+    if (!emergency) return res.status(404).json({ error: 'Emergency not found' });
+
+    res.json({ emergency, responder: emergency.responder });
   } catch (error) {
     res.status(500).json({ error: "Fetch failed" });
   }
 });
 
+// POST /api/emergency/:id/accept
+router.post('/:id/accept', async (req: Request, res: Response) => {
+  try {
+    const { responder_id } = req.body;
+    
+    await prisma.emergency.update({
+      where: { id: req.params.id },
+      data: { status: 'in-progress', responder_id: responder_id }
+    });
+
+    await prisma.emergencyAlert.updateMany({
+      where: { emergency_id: req.params.id, responder_id: responder_id },
+      data: { status: 'accepted', responded_at: new Date() }
+    });
+
+    await prisma.emergencyAlert.updateMany({
+      where: { emergency_id: req.params.id, responder_id: { not: responder_id } },
+      data: { status: 'declined' } 
+    });
+
+    await prisma.user.update({
+        where: { id: responder_id },
+        data: { successful_responses: { increment: 1 } }
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to accept" });
+  }
+});
+
+// POST /api/emergency/:id/resolve
+router.post('/:id/resolve', async (req: Request, res: Response) => {
+    try {
+        const emergency = await prisma.emergency.update({
+            where: { id: req.params.id },
+            data: { status: 'resolved', resolved_at: new Date() }
+        });
+
+        if (emergency.responder_id) {
+            await prisma.user.update({
+                where: { id: emergency.responder_id },
+                data: { total_lives_helped: { increment: 1 } }
+            });
+        }
+
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: "Failed to resolve" });
+    }
+});
+
+// ✅ THIS IS THE MISSING LINE CAUSING YOUR ERROR
 export default router;

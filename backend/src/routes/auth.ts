@@ -12,6 +12,33 @@ const prisma = new PrismaClient();
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@neighborcare.com';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 
+
+// POST /api/auth/change-password
+router.post('/change-password', async (req: Request, res: Response) => {
+  try {
+    const { userId, oldPassword, newPassword } = req.body;
+    
+    // 1. Find user
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // 2. Check old password
+    const isMatch = await bcrypt.compare(oldPassword, user.password);
+    if (!isMatch) return res.status(401).json({ error: 'Incorrect old password' });
+
+    // 3. Hash new password & update
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedPassword }
+    });
+
+    res.json({ success: true, message: 'Password updated' });
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // POST /api/auth/register
 router.post('/register', async (req: Request, res: Response) => {
   try {

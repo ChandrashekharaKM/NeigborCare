@@ -1,7 +1,13 @@
-import React from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, ActivityIndicator, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { NavigationContainer, NavigationIndependentTree } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as LocalAuthentication from 'expo-local-authentication';
+import { Ionicons } from '@expo/vector-icons';
+
+// Context
+import { useAuth } from '../context/AuthContext';
 
 // Screens
 import { LoginScreen } from '../screens/LoginScreen';
@@ -17,18 +23,72 @@ import { ProfileScreen } from '../screens/ProfileScreen';
 import { EmergencyHistoryScreen } from '../screens/EmergencyHistoryScreen';
 import { MedicalRecordsScreen } from '../screens/MedicalRecordsScreen'; 
 import { PrivacySecurityScreen } from '../screens/PrivacySecurityScreen';
-
-// --- ADD THESE IMPORTS ---
 import { EmergencyContactsScreen } from '../screens/EmergencyContactsScreen';
 import { HelpSupportScreen } from '../screens/HelpSupportScreen';
-
-import { useAuth } from '../context/AuthContext';
 
 const Stack = createNativeStackNavigator();
 
 export const RootNavigator: React.FC = () => {
-  const { state } = useAuth();
+  const { state, authContext } = useAuth();
 
+  // --- BIOMETRIC LOCK STATE ---
+  const [isBiometricLocked, setIsBiometricLocked] = useState(false);
+  const [isCheckingBio, setIsCheckingBio] = useState(false);
+
+  // 1. Check Biometric Preference when App Loads or User Logs In
+  useEffect(() => {
+    const checkBiometricRequirement = async () => {
+      if (state.user) {
+        try {
+          const enabled = await AsyncStorage.getItem('biometric_enabled');
+          if (enabled === 'true') {
+            setIsBiometricLocked(true); // Lock immediately
+            authenticateUser(); // Trigger FaceID/Fingerprint
+          }
+        } catch (e) {
+          console.log("Error checking biometric settings", e);
+        }
+      } else {
+        // If user logs out, reset lock
+        setIsBiometricLocked(false);
+      }
+    };
+
+    if (!state.isLoading) {
+      checkBiometricRequirement();
+    }
+  }, [state.user, state.isLoading]);
+
+  // 2. Authenticate User Function
+  const authenticateUser = async () => {
+    setIsCheckingBio(true);
+    try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+
+      if (hasHardware && isEnrolled) {
+        const result = await LocalAuthentication.authenticateAsync({
+          promptMessage: 'Unlock NeighborCare',
+          fallbackLabel: 'Log Out',
+          disableDeviceFallback: false,
+        });
+
+        if (result.success) {
+          setIsBiometricLocked(false); // ✅ Unlock
+        }
+      } else {
+        // If hardware not available, unlock to prevent getting stuck
+        setIsBiometricLocked(false);
+      }
+    } catch (err) {
+      console.log("Biometric Error", err);
+      setIsBiometricLocked(false);
+    } finally {
+      setIsCheckingBio(false);
+    }
+  };
+
+  // 3. Loading Screen
   if (state.isLoading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -37,6 +97,26 @@ export const RootNavigator: React.FC = () => {
     );
   }
 
+  // 4. 🔒 LOCK SCREEN (If Locked)
+  if (state.user && isBiometricLocked) {
+    return (
+      <View style={styles.lockContainer}>
+        <Ionicons name="lock-closed" size={64} color="#DC2626" />
+        <Text style={styles.lockTitle}>NeighborCare Locked</Text>
+        <Text style={styles.lockSub}>Biometric authentication required</Text>
+        
+        <TouchableOpacity style={styles.unlockBtn} onPress={authenticateUser}>
+          <Text style={styles.unlockText}>Tap to Unlock</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.logoutBtn} onPress={() => authContext.signOut()}>
+          <Text style={styles.logoutText}>Log Out</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // 5. MAIN NAVIGATOR
   const getStackKey = () => {
     if (!state.user) return 'guest';
     if (state.user.is_admin) return 'admin';
@@ -127,3 +207,46 @@ const PlaceholderScreen = () => {
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  lockContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 20
+  },
+  lockTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#1E293B',
+    marginTop: 20
+  },
+  lockSub: {
+    fontSize: 14,
+    color: '#64748B',
+    marginTop: 5,
+    marginBottom: 40
+  },
+  unlockBtn: {
+    backgroundColor: '#DC2626',
+    paddingVertical: 15,
+    paddingHorizontal: 40,
+    borderRadius: 30,
+    marginBottom: 20,
+    width: '80%',
+    alignItems: 'center'
+  },
+  unlockText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold'
+  },
+  logoutBtn: {
+    padding: 15,
+  },
+  logoutText: {
+    color: '#DC2626',
+    fontWeight: '600'
+  }
+});
