@@ -14,15 +14,16 @@ import {
   Platform,
   StatusBar,
   Linking,
-  Vibration
+  Vibration,
+  Keyboard // <--- Added Keyboard import
 } from 'react-native';
-import MapView, { PROVIDER_DEFAULT } from 'react-native-maps';
+import MapView, { PROVIDER_DEFAULT } from '../components/MapWrapper'; 
 import * as Location from 'expo-location';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons'; 
 import { useAuth } from '../context/AuthContext';
 import apiService from '../services/api';
 import geolocationService from '../services/geolocation';
-import webSocketService from '../services/socket'; // <--- IMPORT SOCKET
+import webSocketService from '../services/socket'; 
 import { LocationData } from '../types';
 
 const { width } = Dimensions.get('window');
@@ -47,7 +48,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const [selectedType, setSelectedType] = useState(EMERGENCY_TYPES[0]);
   const [modalVisible, setModalVisible] = useState(false);
   const [searchText, setSearchText] = useState('');
-  const mapRef = useRef<MapView>(null);
+  const mapRef = useRef<any>(null);
   const [mapRegion, setMapRegion] = useState({
     latitude: 12.9716, longitude: 77.5946, latitudeDelta: 0.005, longitudeDelta: 0.005,
   });
@@ -57,7 +58,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     startPulse();
     getCurrentLocation();
     
-    // 1. CONNECT SOCKET ON LOAD
     if (authState.user) {
       webSocketService.connect(authState.user.id);
     }
@@ -103,8 +103,37 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     }
   };
 
+  // ✅ NEW: Handle Text Search Geocoding
+  const handleGeocode = async () => {
+    if (!searchText.trim()) return;
+    Keyboard.dismiss(); // Hide keyboard
+    try {
+      const geocodedLocation = await Location.geocodeAsync(searchText);
+      if (geocodedLocation.length > 0) {
+        const { latitude, longitude } = geocodedLocation[0];
+        
+        // Update Map Region
+        const newRegion = {
+          latitude,
+          longitude,
+          latitudeDelta: 0.005,
+          longitudeDelta: 0.005,
+        };
+        setMapRegion(newRegion);
+        
+        // Animate Camera to new location
+        mapRef.current?.animateToRegion(newRegion, 1000);
+      } else {
+        Alert.alert('Not Found', 'Could not find the location entered.');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to find location.');
+    }
+  };
+
   const confirmManualLocation = () => {
     setIsManualMode(true);
+    // Use the center of the map as the new location
     setLocation({ latitude: mapRegion.latitude, longitude: mapRegion.longitude, heading: 0, speed: 0 });
     fetchAddress(mapRegion.latitude, mapRegion.longitude);
     setModalVisible(false);
@@ -123,7 +152,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
       if (authState.user) {
         const modeDesc = `Critical SOS: ${selectedType.label} Emergency.`; 
         
-        // 1. CREATE IN DB
         const emergency = await apiService.createEmergency(
           authState.user.id,
           finalLocation.latitude,
@@ -132,7 +160,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
           modeDesc
         );
 
-        // 2. ⚡ EMIT SOCKET EVENT (INSTANT NOTIFICATION) ⚡
         webSocketService.emitCreateEmergency({
             emergency_id: emergency.emergency.id,
             user_id: authState.user.id,
@@ -155,13 +182,11 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     <View style={styles.mainContainer}>
       <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       
+      {/* HEADER */}
       <View style={styles.headerContainer}>
         <View style={styles.headerContent}>
           <View style={styles.headerLeft}>
             <View style={styles.brandingRow}>
-              <View style={styles.logoIconBg}>
-                <FontAwesome5 name="plus" size={16} color="#EF4444" />
-              </View>
               <Text style={styles.appName}>Neighbor<Text style={styles.appNameBold}>Care</Text></Text>
             </View>
             <TouchableOpacity 
@@ -238,14 +263,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               <MaterialCommunityIcons name="hospital-building" size={24} color="#DC2626" />
             </View>
             <Text style={styles.gridTitle}>Hospitals</Text>
-            <Text style={styles.gridSub}>Nearby Facilities</Text>
+            <Text style={styles.gridSub}>Nearby Facilities </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.gridCard} onPress={() => navigation.navigate('EmergencyTracking')}>
             <View style={[styles.gridIcon, { backgroundColor: '#E0F2FE' }]}>
               <MaterialCommunityIcons name="ambulance" size={24} color="#0284C7" />
             </View>
             <Text style={styles.gridTitle}>Ambulance</Text>
-            <Text style={styles.gridSub}>Track Status</Text>
+            <Text style={styles.gridSub}>Track Status </Text>
           </TouchableOpacity>
         </View>
         
@@ -255,28 +280,32 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               <MaterialCommunityIcons name="medical-bag" size={24} color="#16A34A" />
             </View>
             <Text style={styles.gridTitle}>First Aid</Text>
-            <Text style={styles.gridSub}>Emergency Guide</Text>
+            <Text style={styles.gridSub}>Emergency Guide </Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.gridCard} onPress={() => navigation.navigate('BecomeResponder')}>
             <View style={[styles.gridIcon, { backgroundColor: '#F3E8FF' }]}>
               <MaterialCommunityIcons name="hand-heart" size={24} color="#9333EA" />
             </View>
             <Text style={styles.gridTitle}>Volunteer</Text>
-            <Text style={styles.gridSub}>Join Network</Text>
+            <Text style={styles.gridSub}>Join Network </Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
 
+      {/* FOOTER */}
       <View style={[styles.footer, { backgroundColor: '#DC2626' }]}>
-        <TouchableOpacity onPress={() => Linking.openURL('tel:108')}>
-          <Text style={styles.footerLink}>Call Ambulance (108)</Text>
+        <TouchableOpacity onPress={() => Linking.openURL('https://policies.google.com/privacy')}>
+          <Text style={styles.footerLink}>Privacy Policy</Text>
         </TouchableOpacity>
+        
         <Text style={styles.footerDivider}>|</Text>
-        <TouchableOpacity onPress={() => Linking.openURL('tel:100')}>
-          <Text style={styles.footerLink}>Police (100)</Text>
+        
+        <TouchableOpacity onPress={() => Linking.openURL('https://policies.google.com/terms')}>
+          <Text style={styles.footerLink}>Terms of Service </Text>
         </TouchableOpacity>
       </View>
 
+      {/* LOCATION MODAL */}
       <Modal animationType="slide" visible={modalVisible} onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
@@ -284,18 +313,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               <Ionicons name="close" size={24} color="#1E293B" />
             </TouchableOpacity>
             <View style={styles.searchBar}>
-              <Ionicons name="search" size={20} color="#94A3B8" />
+              <TouchableOpacity onPress={handleGeocode}>
+                 <Ionicons name="search" size={20} color="#94A3B8" />
+              </TouchableOpacity>
               <TextInput 
-                style={styles.input} placeholder="Search location..." 
-                value={searchText} onChangeText={setSearchText}
+                style={styles.input} 
+                placeholder="Search location (e.g. MG Road)..." 
+                value={searchText} 
+                onChangeText={setSearchText}
+                returnKeyType="search" // Keyboard says "Search"
+                onSubmitEditing={handleGeocode} // Trigger on Enter
               />
             </View>
           </View>
           <View style={styles.mapContainer}>
             <MapView
-              ref={mapRef} style={styles.map} provider={PROVIDER_DEFAULT}
-              initialRegion={mapRegion} onRegionChangeComplete={(r) => setMapRegion(r)}
+              ref={mapRef} 
+              style={styles.map} 
+              provider={PROVIDER_DEFAULT}
+              initialRegion={mapRegion} 
+              onRegionChangeComplete={(r: any) => setMapRegion(r)}
             />
+            {/* Center Pin */}
             <View style={styles.fixedPin}>
               <Ionicons name="location" size={42} color="#DC2626" style={{ marginBottom: 42 }} />
             </View>
@@ -305,7 +344,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               <Text style={styles.btnSecText}>Use GPS</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.btnPrimary, { backgroundColor: '#DC2626' }]} onPress={confirmManualLocation}>
-              <Text style={styles.btnPriText}>Confirm</Text>
+              <Text style={styles.btnPriText}>Confirm Location</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -373,9 +412,13 @@ const styles = StyleSheet.create({
   gridIcon: { width: 48, height: 48, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
   gridTitle: { fontSize: 15, fontWeight: '700', color: '#1E293B' },
   gridSub: { fontSize: 12, color: '#64748B', marginTop: 2 },
-  footer: { paddingVertical: 12, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', position: 'absolute', bottom: 0, left: 0, right: 0 },
-  footerLink: { color: '#fff', fontSize: 12, fontWeight: '700', paddingHorizontal: 12 },
-  footerDivider: { color: 'rgba(255,255,255,0.4)', fontSize: 14 },
+  
+  // Footer
+  footer: { paddingVertical: 15, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', position: 'absolute', bottom: 0, left: 0, right: 0 },
+  footerLink: { color: '#fff', fontSize: 13, fontWeight: '600', textDecorationLine: 'underline' },
+  footerDivider: { color: 'rgba(255,255,255,0.4)', fontSize: 14, marginHorizontal: 10 },
+
+  // Modal
   modalContainer: { flex: 1, backgroundColor: '#fff' },
   modalHeader: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 15, flexDirection: 'row', alignItems: 'center' },
   closeModalBtn: { marginRight: 15 },

@@ -78,14 +78,13 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
   return (
     <TouchableWithoutFeedback onPress={() => Keyboard.dismiss()}>
       <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
-        <TouchableOpacity onPress={() => navigation.navigate('Login')} style={styles.backButton}>
-          <Text style={styles.backButtonText}>← Back</Text>
-        </TouchableOpacity>
-
+        
+        {/* --- LOGO SECTION START --- */}
         <View style={styles.logoContainer}>
-          <Text style={styles.appName}>🚑 NeighborCare</Text>
-          <Text style={styles.tagline}>Create Your Account</Text>
+          <Text style={styles.appName}>NeighborCare</Text>
+          <Text style={styles.tagline}>Please Register to Continue </Text>
         </View>
+        {/* --- LOGO SECTION END --- */}
 
         <View style={styles.formContainer}>
           <Text style={styles.title}>Join Our Community</Text>
@@ -253,14 +252,6 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: 20,
     paddingVertical: 20,
-  },
-  backButton: {
-    paddingVertical: 10,
-  },
-  backButtonText: {
-    color: '#e74c3c',
-    fontSize: 14,
-    fontWeight: '600',
   },
   logoContainer: {
     alignItems: 'center',

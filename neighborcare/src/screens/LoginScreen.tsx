@@ -76,8 +76,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     <TouchableWithoutFeedback onPress={() => Keyboard.dismiss()}>
       <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
         <View style={styles.logoContainer}>
-          <Text style={styles.appName}>🚑 NeighborCare</Text>
-          <Text style={styles.tagline}>Community Emergency Response</Text>
+          <Text style={styles.appName}>NeighborCare</Text>
+          <Text style={styles.tagline}>Community Emergency Response </Text>
         </View>
 
         <View style={styles.formContainer}>
