@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -17,10 +17,11 @@ import {
 import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
 import { FontAwesome5, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
+import { useFocusEffect } from '@react-navigation/native'; // ✅ NEW IMPORT
 import { useAuth } from '../context/AuthContext';
 import apiService from '../services/api';
 import geolocationService from '../services/geolocation';
-import webSocketService from '../services/socket'; // <--- SOCKET IMPORT
+import webSocketService from '../services/socket'; 
 import { LocationData } from '../types';
 
 const { width } = Dimensions.get('window');
@@ -38,22 +39,30 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
   const [isAvailable, setIsAvailable] = useState(false);
   const [loading, setLoading] = useState(false);
   
+  // Stats State
   const [stats, setStats] = useState({
-    successful_responses: 0,
-    emergency_alerts_received: 0,
-    total_lives_helped: 0,
+    successful_responses: 0,      
+    emergency_alerts_received: 0, 
+    total_lives_helped: 0,        
   });
   
   const [location, setLocation] = useState<LocationData | null>(null);
+  const [activeMission, setActiveMission] = useState<any>(null); 
   const [medicalResources, setMedicalResources] = useState<any[]>([]);
   const [resourcesLoading, setResourcesLoading] = useState(false);
   const [addressText, setAddressText] = useState('Locating...');
   const mapRef = useRef<MapView>(null);
   const hasFetchedInitialResources = useRef(false);
 
-  // 1. ON MOUNT
+  // ✅ 1. FETCH FRESH STATS WHENEVER SCREEN IS FOCUSED
+  useFocusEffect(
+    useCallback(() => {
+      loadResponderStats();
+    }, [authState.user])
+  );
+
+  // 2. ON MOUNT
   useEffect(() => {
-    loadResponderStats();
     initializeLocation();
     
     // Connect Socket
@@ -64,7 +73,14 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
     // ⚡ LISTEN FOR REAL-TIME ALERTS ⚡
     webSocketService.onEmergencyAlert((data) => {
         console.log("🚨 REAL-TIME ALERT RECEIVED:", data);
-        if (isAvailable) {
+        
+        // Increment "Alerts Received" immediately
+        setStats(prev => ({
+            ...prev,
+            emergency_alerts_received: prev.emergency_alerts_received + 1
+        }));
+
+        if (isAvailable && !activeMission) {
             Alert.alert(
                 "🚨 EMERGENCY ALERT",
                 `${data.emergency_type} reported nearby.\nVictim: ${data.user_name}`,
@@ -78,11 +94,11 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
 
     return () => { 
         geolocationService.stopLocationTracking(); 
-        webSocketService.off('emergency_alert'); // Cleanup listener
+        webSocketService.off('emergency_alert'); 
     };
-  }, [isAvailable]);
+  }, [isAvailable, activeMission]);
 
-  // 2. ON LOCATION CHANGE
+  // 3. ON LOCATION CHANGE
   useEffect(() => {
     if (location) {
       fetchAddress(location.latitude, location.longitude);
@@ -158,11 +174,17 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
     if (authState.user) {
       try {
         const profile = await apiService.getUserProfile(authState.user.id);
+        
+        // ✅ Ensure Logic: Alerts >= Responses >= Lives
+        // This is a visual safeguard, but the DB should be the source of truth
+        const realAlerts = Math.max(profile.emergency_alerts_received || 0, profile.successful_responses || 0);
+        
         setStats({
           successful_responses: profile.successful_responses || 0,
-          emergency_alerts_received: profile.emergency_alerts_received || 0,
+          emergency_alerts_received: realAlerts, 
           total_lives_helped: profile.total_lives_helped || 0,
         });
+        
         if (profile.is_available !== undefined) setIsAvailable(profile.is_available);
       } catch (e) {}
     }
@@ -177,14 +199,12 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
     setLoading(true);
     try {
       if (authState.user) {
-        // API UPDATE
         await apiService.setResponderAvailability(
           authState.user.id,
           value,
           location.latitude,
           location.longitude
         );
-        // SOCKET UPDATE (Join Room)
         webSocketService.emitResponderAvailability(authState.user.id, value);
       }
     } catch (error) {
@@ -195,22 +215,33 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
     }
   };
 
-  // ✅ CRITICAL: ACCEPT & NAVIGATE TO TRACKER
   const startMission = async (data: any) => {
     try {
-        // 1. Notify Server we accepted
         await apiService.acceptEmergency(data.emergency_id, authState.user!.id);
-        
-        // 2. Notify Victim via Socket
         webSocketService.emitAcceptEmergency(data.emergency_id, authState.user!.id);
 
-        // 3. Start Broadcasting Location
+        // Update Local Stats
+        setStats(prev => ({
+            ...prev,
+            successful_responses: prev.successful_responses + 1
+        }));
+
+        setActiveMission({
+            id: data.emergency_id,
+            victimName: data.user_name,
+            type: data.emergency_type,
+            location: {
+                latitude: data.latitude,
+                longitude: data.longitude,
+                address: "Locating..." 
+            }
+        });
+
         geolocationService.startLocationTracking((newLoc) => {
             setLocation(newLoc);
             webSocketService.emitLocationUpdate(data.emergency_id, newLoc.latitude, newLoc.longitude);
         });
 
-        // 4. Navigate to Tracking Screen
         navigation.navigate('EmergencyTracking', { 
             emergencyId: data.emergency_id,
             isResponderView: true 
@@ -218,6 +249,44 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
 
     } catch (error) {
         Alert.alert("Error", "Failed to accept mission.");
+    }
+  };
+
+  const completeMission = async () => {
+    if (!activeMission) return;
+
+    try {
+        setLoading(true);
+        await apiService.resolveEmergency(activeMission.id);
+        
+        setStats(prev => ({
+            ...prev,
+            total_lives_helped: prev.total_lives_helped + 1
+        }));
+
+        Alert.alert("Mission Complete", "Great job! You helped save a life.", [
+            { 
+                text: "OK", 
+                onPress: () => {
+                    setActiveMission(null);
+                    geolocationService.stopLocationTracking();
+                    if (location && mapRef.current) {
+                        mapRef.current.animateToRegion({
+                            latitude: location.latitude,
+                            longitude: location.longitude,
+                            latitudeDelta: 0.02,
+                            longitudeDelta: 0.02,
+                        }, 1000);
+                    }
+                    // Refresh stats from server to be sure
+                    loadResponderStats();
+                } 
+            }
+        ]);
+    } catch (error) {
+        Alert.alert("Error", "Failed to complete mission.");
+    } finally {
+        setLoading(false);
     }
   };
 
@@ -256,12 +325,7 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
       <View style={styles.headerContainer}>
         <View style={styles.headerContent}>
           <View style={styles.headerLeft}>
-            <View style={styles.brandingRow}>
-              <View style={styles.logoIconBg}>
-                <FontAwesome5 name="ambulance" size={14} color="#DC2626" />
-              </View>
-              <Text style={styles.appName}>Responder<Text style={styles.appNameBold}>Mode</Text></Text>
-            </View>
+            <Text style={styles.appName}>Neighbor<Text style={styles.appNameBold}>Care</Text></Text>
             <View style={styles.locationPill}>
               <Ionicons name="location" size={12} color="#fff" style={{ marginRight: 4 }} />
               <Text style={styles.locationText} numberOfLines={1}>{addressText}</Text>
@@ -290,114 +354,141 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
                 latitudeDelta: 0.02,
                 longitudeDelta: 0.02,
                 }}
-            />
-
-            {/* GPS RECENTER BUTTON */}
-            <TouchableOpacity 
-              style={styles.gpsFab} 
-              onPress={handleRecenter}
-              activeOpacity={0.8}
             >
+                {activeMission && (
+                    <>
+                        <Marker coordinate={activeMission.location} title="Victim Location">
+                            <View style={styles.victimMarker}>
+                                <FontAwesome5 name="exclamation" size={20} color="#fff" />
+                            </View>
+                        </Marker>
+                        {location && (
+                            <Polyline 
+                                coordinates={[
+                                    { latitude: location.latitude, longitude: location.longitude },
+                                    { latitude: activeMission.location.latitude, longitude: activeMission.location.longitude }
+                                ]}
+                                strokeColor="#DC2626"
+                                strokeWidth={4}
+                                lineDashPattern={[1]}
+                            />
+                        )}
+                    </>
+                )}
+            </MapView>
+
+            <TouchableOpacity style={styles.gpsFab} onPress={handleRecenter} activeOpacity={0.8}>
               <Ionicons name="navigate" size={22} color="#DC2626" />
             </TouchableOpacity>
-
           </View>
 
           {/* DASHBOARD */}
           <View style={styles.dashboardContainer}>
             <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                 
-                {/* Status Card */}
-                <View style={styles.statusCard}>
-                    <View style={styles.statusInfo}>
-                        <Text style={styles.statusLabel}>Duty Status</Text>
-                        <View style={styles.statusBadgeRow}>
-                            <View style={[styles.statusDot, { backgroundColor: isAvailable ? '#22C55E' : '#94A3B8' }]} />
-                            <Text style={[styles.statusText, { color: isAvailable ? '#15803D' : '#64748B' }]}>
-                                {isAvailable ? 'Active & Scanning' : 'Offline'}
-                            </Text>
+                {activeMission ? (
+                    /* MISSION CARD */
+                    <View style={styles.missionCard}>
+                        <View style={styles.missionHeader}>
+                            <Text style={styles.missionTitle}>🚑 ACTIVE MISSION</Text>
+                            <Text style={styles.missionTime}>In Progress</Text>
                         </View>
-                    </View>
-                    {loading ? (
-                        <ActivityIndicator size="small" color="#DC2626" />
-                    ) : (
-                        <Switch
-                            value={isAvailable}
-                            onValueChange={handleAvailabilityToggle}
-                            trackColor={{ false: '#E2E8F0', true: '#DC2626' }}
-                            thumbColor={'#fff'}
-                            style={{ transform: [{ scaleX: 1.1 }, { scaleY: 1.1 }] }}
-                        />
-                    )}
-                </View>
-
-                {/* Stats Grid */}
-                <View style={styles.statsRow}>
-                    <View style={styles.statCard}>
-                        <View style={[styles.statIconBg, { backgroundColor: '#F0F9FF' }]}>
-                            <MaterialCommunityIcons name="ambulance" size={24} color="#0284C7" />
+                        <View style={styles.missionInfo}>
+                            <View style={{flex:1}}>
+                                <Text style={styles.victimName}>{activeMission.victimName}</Text>
+                                <Text style={styles.victimType}>{activeMission.type}</Text>
+                                <Text style={styles.victimAddress}>{activeMission.location.address}</Text>
+                            </View>
+                            <TouchableOpacity style={styles.navBtn} onPress={() => openGoogleMaps(activeMission.location.latitude, activeMission.location.longitude)}>
+                                <FontAwesome5 name="directions" size={24} color="#fff" />
+                            </TouchableOpacity>
                         </View>
-                        <Text style={styles.statValue}>{stats.successful_responses}</Text>
-                        <Text style={styles.statLabel}>Responded</Text>
-                    </View>
-                    <View style={styles.statCard}>
-                        <View style={[styles.statIconBg, { backgroundColor: '#FEF2F2' }]}>
-                            <MaterialCommunityIcons name="heart-pulse" size={24} color="#DC2626" />
-                        </View>
-                        <Text style={styles.statValue}>{stats.total_lives_helped}</Text>
-                        <Text style={styles.statLabel}>Lives</Text>
-                    </View>
-                    <View style={styles.statCard}>
-                        <View style={[styles.statIconBg, { backgroundColor: '#FFF7ED' }]}>
-                            <MaterialCommunityIcons name="bell-ring" size={24} color="#EA580C" />
-                        </View>
-                        <Text style={styles.statValue}>{stats.emergency_alerts_received}</Text>
-                        <Text style={styles.statLabel}>Alerts</Text>
-                    </View>
-                </View>
-
-                {/* Nearby Facilities */}
-                <View style={styles.sectionHeaderRow}>
-                    <Text style={styles.sectionHeader}>Nearby Facilities</Text>
-                    {location && (
-                        <TouchableOpacity onPress={() => fetchRealNearbyResources(location)}>
-                            <Ionicons name="refresh" size={20} color="#64748B" />
+                        <TouchableOpacity style={styles.completeBtn} onPress={completeMission} disabled={loading}>
+                            {loading ? (
+                                <ActivityIndicator color="#fff" />
+                            ) : (
+                                <Text style={styles.completeBtnText}>REPORT ARRIVAL / COMPLETE</Text>
+                            )}
                         </TouchableOpacity>
-                    )}
-                </View>
-
-                {resourcesLoading ? (
-                    <ActivityIndicator size="small" color="#DC2626" style={{ marginTop: 10 }} />
-                ) : medicalResources.length > 0 ? (
-                    <FlatList
-                        data={medicalResources}
-                        renderItem={renderResourceItem}
-                        keyExtractor={(item) => item.id}
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.resourcesList}
-                    />
-                ) : (
-                    <View style={styles.emptyContainer}>
-                        <Text style={styles.emptyText}>Tap refresh to find nearby hospitals.</Text>
                     </View>
-                )}
-
-                {/* Switch View Button (For Demo) */}
-                <View style={{marginTop: 20}}>
-                    <Text style={styles.sectionHeader}>Actions</Text>
-                    <TouchableOpacity 
-                        style={styles.actionRow}
-                        onPress={() => navigation.navigate('Home')} 
-                    >
-                        <View style={[styles.actionIcon, { backgroundColor: '#F3E8FF' }]}>
-                            <FontAwesome5 name="user" size={16} color="#9333EA" />
+                ) : (
+                    /* NORMAL DASHBOARD */
+                    <>
+                        <View style={styles.statusCard}>
+                            <View style={styles.statusInfo}>
+                                <Text style={styles.statusLabel}>Duty Status</Text>
+                                <View style={styles.statusBadgeRow}>
+                                    <View style={[styles.statusDot, { backgroundColor: isAvailable ? '#22C55E' : '#94A3B8' }]} />
+                                    <Text style={[styles.statusText, { color: isAvailable ? '#15803D' : '#64748B' }]}>
+                                        {isAvailable ? 'Active & Scanning' : 'Offline'}
+                                    </Text>
+                                </View>
+                            </View>
+                            {loading ? (
+                                <ActivityIndicator size="small" color="#DC2626" />
+                            ) : (
+                                <Switch
+                                    value={isAvailable}
+                                    onValueChange={handleAvailabilityToggle}
+                                    trackColor={{ false: '#E2E8F0', true: '#DC2626' }}
+                                    thumbColor={'#fff'}
+                                    style={{ transform: [{ scaleX: 1.1 }, { scaleY: 1.1 }] }}
+                                />
+                            )}
                         </View>
-                        <Text style={styles.actionText}>Switch to User View</Text>
-                        <Ionicons name="chevron-forward" size={20} color="#CBD5E1" />
-                    </TouchableOpacity>
-                </View>
 
+                        {/* STATS ROW */}
+                        <View style={styles.statsRow}>
+                            <View style={styles.statCard}>
+                                <View style={[styles.statIconBg, { backgroundColor: '#F0F9FF' }]}>
+                                    <MaterialCommunityIcons name="ambulance" size={24} color="#0284C7" />
+                                </View>
+                                <Text style={styles.statValue}>{stats.successful_responses}</Text>
+                                <Text style={styles.statLabel}>Responded</Text>
+                            </View>
+                            <View style={styles.statCard}>
+                                <View style={[styles.statIconBg, { backgroundColor: '#FEF2F2' }]}>
+                                    <MaterialCommunityIcons name="heart-pulse" size={24} color="#DC2626" />
+                                </View>
+                                <Text style={styles.statValue}>{stats.total_lives_helped}</Text>
+                                <Text style={styles.statLabel}>Lives</Text>
+                            </View>
+                            <View style={styles.statCard}>
+                                <View style={[styles.statIconBg, { backgroundColor: '#FFF7ED' }]}>
+                                    <MaterialCommunityIcons name="bell-ring" size={24} color="#EA580C" />
+                                </View>
+                                <Text style={styles.statValue}>{stats.emergency_alerts_received}</Text>
+                                <Text style={styles.statLabel}>Alerts</Text>
+                            </View>
+                        </View>
+
+                        <View style={styles.sectionHeaderRow}>
+                            <Text style={styles.sectionHeader}>Nearby Facilities</Text>
+                            {location && (
+                                <TouchableOpacity onPress={() => fetchRealNearbyResources(location)}>
+                                    <Ionicons name="refresh" size={20} color="#64748B" />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+
+                        {resourcesLoading ? (
+                            <ActivityIndicator size="small" color="#DC2626" style={{ marginTop: 10 }} />
+                        ) : medicalResources.length > 0 ? (
+                            <FlatList
+                                data={medicalResources}
+                                renderItem={renderResourceItem}
+                                keyExtractor={(item) => item.id}
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={styles.resourcesList}
+                            />
+                        ) : (
+                            <View style={styles.emptyContainer}>
+                                <Text style={styles.emptyText}>Tap refresh to find nearby hospitals.</Text>
+                            </View>
+                        )}
+                    </>
+                )}
                 <View style={{height: 100}} />
             </ScrollView>
           </View>
@@ -405,12 +496,8 @@ export const ResponderDashboardScreen: React.FC<ResponderDashboardScreenProps> =
 
       {/* FOOTER */}
       <View style={[styles.footer, { backgroundColor: '#DC2626' }]}>
-        <TouchableOpacity onPress={() => Linking.openURL('tel:108')}>
-          <Text style={styles.footerLink}>Call Ambulance (108)</Text>
-        </TouchableOpacity>
-        <Text style={styles.footerDivider}>|</Text>
-        <TouchableOpacity onPress={() => Linking.openURL('tel:100')}>
-          <Text style={styles.footerLink}>Police (100)</Text>
+        <TouchableOpacity onPress={() => navigation.navigate('PrivacySecurity')}>
+          <Text style={styles.footerLink}>Privacy & Policies</Text>
         </TouchableOpacity>
       </View>
 
@@ -430,16 +517,17 @@ const styles = StyleSheet.create({
   },
   headerContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   headerLeft: { flex: 1, justifyContent: 'center' },
-  brandingRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  logoIconBg: { width: 24, height: 24, borderRadius: 4, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', marginRight: 8 },
-  appName: { fontSize: 20, color: '#fff', fontWeight: '400' },
+  
+  appName: { fontSize: 24, color: '#fff', fontWeight: '400', marginBottom: 6 },
   appNameBold: { fontWeight: '800' },
+
   locationPill: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.1)', 
     paddingVertical: 4, paddingHorizontal: 8, borderRadius: 12,
     alignSelf: 'flex-start', maxWidth: '95%'
   },
   locationText: { fontSize: 12, color: '#FFFFFF', fontWeight: '600' },
+  
   profileBtn: { 
     width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.2)', 
     justifyContent: 'center', alignItems: 'center', marginTop: 4 
@@ -497,17 +585,33 @@ const styles = StyleSheet.create({
   emptyContainer: { alignItems: 'center', padding: 10 },
   emptyText: { color: '#94A3B8', fontStyle: 'italic', fontSize: 12 },
 
-  actionRow: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', 
-    padding: 16, borderRadius: 16, elevation: 2, marginBottom: 10
+  missionCard: {
+    backgroundColor: '#fff', borderRadius: 16, padding: 20, elevation: 5,
+    borderWidth: 1, borderColor: '#FEE2E2', marginBottom: 20
   },
-  actionIcon: { width: 36, height: 36, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  actionText: { flex: 1, fontSize: 15, fontWeight: '600', color: '#334155' },
+  missionHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15, borderBottomWidth: 1, borderBottomColor: '#F1F5F9', paddingBottom: 10 },
+  missionTitle: { fontSize: 14, fontWeight: '800', color: '#DC2626' },
+  missionTime: { fontSize: 12, color: '#64748B', fontWeight: '600' },
+  missionInfo: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  victimName: { fontSize: 18, fontWeight: '700', color: '#1E293B' },
+  victimType: { fontSize: 14, fontWeight: '600', color: '#DC2626', marginBottom: 4 },
+  victimAddress: { fontSize: 13, color: '#64748B', maxWidth: '80%' },
+  navBtn: { 
+    width: 50, height: 50, borderRadius: 25, backgroundColor: '#0284C7',
+    justifyContent: 'center', alignItems: 'center', elevation: 3
+  },
+  completeBtn: {
+    backgroundColor: '#22C55E', paddingVertical: 15, borderRadius: 12, alignItems: 'center'
+  },
+  completeBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
+  victimMarker: {
+    backgroundColor: '#DC2626', width: 36, height: 36, borderRadius: 18,
+    justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff'
+  },
 
   footer: { 
     paddingVertical: 12, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', 
     position: 'absolute', bottom: 0, left: 0, right: 0 
   },
   footerLink: { color: '#fff', fontSize: 12, fontWeight: '700', paddingHorizontal: 12 },
-  footerDivider: { color: 'rgba(255,255,255,0.4)', fontSize: 14 },
 });

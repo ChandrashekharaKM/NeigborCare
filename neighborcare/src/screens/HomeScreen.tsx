@@ -103,16 +103,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     }
   };
 
-  // ✅ NEW: Handle Text Search Geocoding
   const handleGeocode = async () => {
     if (!searchText.trim()) return;
-    Keyboard.dismiss(); // Hide keyboard
+    Keyboard.dismiss(); 
     try {
       const geocodedLocation = await Location.geocodeAsync(searchText);
       if (geocodedLocation.length > 0) {
         const { latitude, longitude } = geocodedLocation[0];
         
-        // Update Map Region
         const newRegion = {
           latitude,
           longitude,
@@ -121,7 +119,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         };
         setMapRegion(newRegion);
         
-        // Animate Camera to new location
         mapRef.current?.animateToRegion(newRegion, 1000);
       } else {
         Alert.alert('Not Found', 'Could not find the location entered.');
@@ -133,7 +130,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 
   const confirmManualLocation = () => {
     setIsManualMode(true);
-    // Use the center of the map as the new location
     setLocation({ latitude: mapRegion.latitude, longitude: mapRegion.longitude, heading: 0, speed: 0 });
     fetchAddress(mapRegion.latitude, mapRegion.longitude);
     setModalVisible(false);
@@ -263,45 +259,44 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               <MaterialCommunityIcons name="hospital-building" size={24} color="#DC2626" />
             </View>
             <Text style={styles.gridTitle}>Hospitals</Text>
-            <Text style={styles.gridSub}>Nearby Facilities </Text>
+            <Text style={styles.gridSub}>Nearby Facilities</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.gridCard} onPress={() => navigation.navigate('EmergencyTracking')}>
+          
+          {/* ✅ UPDATED: Ambulance Button shows alert instead of navigating */}
+          <TouchableOpacity 
+            style={styles.gridCard} 
+            onPress={() => Alert.alert("Coming Soon", "This feature will be updated soon")}
+          >
             <View style={[styles.gridIcon, { backgroundColor: '#E0F2FE' }]}>
               <MaterialCommunityIcons name="ambulance" size={24} color="#0284C7" />
             </View>
             <Text style={styles.gridTitle}>Ambulance</Text>
-            <Text style={styles.gridSub}>Track Status </Text>
+            <Text style={styles.gridSub}>Track Status</Text>
           </TouchableOpacity>
         </View>
         
          <View style={styles.gridRow}>
-            <TouchableOpacity style={styles.gridCard} onPress={() => Alert.alert('Guide', 'First Aid Guide Coming Soon')}>
+            <TouchableOpacity style={styles.gridCard} onPress={() => navigation.navigate('FirstAid')}>
             <View style={[styles.gridIcon, { backgroundColor: '#DCFCE7' }]}>
               <MaterialCommunityIcons name="medical-bag" size={24} color="#16A34A" />
             </View>
             <Text style={styles.gridTitle}>First Aid</Text>
-            <Text style={styles.gridSub}>Emergency Guide </Text>
+            <Text style={styles.gridSub}>Emergency Guide</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.gridCard} onPress={() => navigation.navigate('BecomeResponder')}>
             <View style={[styles.gridIcon, { backgroundColor: '#F3E8FF' }]}>
               <MaterialCommunityIcons name="hand-heart" size={24} color="#9333EA" />
             </View>
             <Text style={styles.gridTitle}>Volunteer</Text>
-            <Text style={styles.gridSub}>Join Network </Text>
+            <Text style={styles.gridSub}>Join Network</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
 
       {/* FOOTER */}
       <View style={[styles.footer, { backgroundColor: '#DC2626' }]}>
-        <TouchableOpacity onPress={() => Linking.openURL('https://policies.google.com/privacy')}>
-          <Text style={styles.footerLink}>Privacy Policy</Text>
-        </TouchableOpacity>
-        
-        <Text style={styles.footerDivider}>|</Text>
-        
-        <TouchableOpacity onPress={() => Linking.openURL('https://policies.google.com/terms')}>
-          <Text style={styles.footerLink}>Terms of Service </Text>
+        <TouchableOpacity onPress={() => navigation.navigate('PrivacySecurity')}>
+          <Text style={styles.footerLink}>Privacy & Policies</Text>
         </TouchableOpacity>
       </View>
 
@@ -321,8 +316,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 placeholder="Search location (e.g. MG Road)..." 
                 value={searchText} 
                 onChangeText={setSearchText}
-                returnKeyType="search" // Keyboard says "Search"
-                onSubmitEditing={handleGeocode} // Trigger on Enter
+                returnKeyType="search"
+                onSubmitEditing={handleGeocode}
               />
             </View>
           </View>
@@ -334,7 +329,6 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               initialRegion={mapRegion} 
               onRegionChangeComplete={(r: any) => setMapRegion(r)}
             />
-            {/* Center Pin */}
             <View style={styles.fixedPin}>
               <Ionicons name="location" size={42} color="#DC2626" style={{ marginBottom: 42 }} />
             </View>
@@ -365,7 +359,6 @@ const styles = StyleSheet.create({
   headerContent: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   headerLeft: { flex: 1, justifyContent: 'center' },
   brandingRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  logoIconBg: { width: 24, height: 24, borderRadius: 4, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center', marginRight: 8 },
   appName: { fontSize: 22, color: '#fff', fontWeight: '400' },
   appNameBold: { fontWeight: '800' },
   locationPill: {
@@ -413,12 +406,10 @@ const styles = StyleSheet.create({
   gridTitle: { fontSize: 15, fontWeight: '700', color: '#1E293B' },
   gridSub: { fontSize: 12, color: '#64748B', marginTop: 2 },
   
-  // Footer
   footer: { paddingVertical: 15, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', position: 'absolute', bottom: 0, left: 0, right: 0 },
   footerLink: { color: '#fff', fontSize: 13, fontWeight: '600', textDecorationLine: 'underline' },
   footerDivider: { color: 'rgba(255,255,255,0.4)', fontSize: 14, marginHorizontal: 10 },
 
-  // Modal
   modalContainer: { flex: 1, backgroundColor: '#fff' },
   modalHeader: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 15, flexDirection: 'row', alignItems: 'center' },
   closeModalBtn: { marginRight: 15 },

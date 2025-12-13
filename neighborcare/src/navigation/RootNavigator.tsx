@@ -25,6 +25,7 @@ import { MedicalRecordsScreen } from '../screens/MedicalRecordsScreen';
 import { PrivacySecurityScreen } from '../screens/PrivacySecurityScreen';
 import { EmergencyContactsScreen } from '../screens/EmergencyContactsScreen';
 import { HelpSupportScreen } from '../screens/HelpSupportScreen';
+import { FirstAidScreen } from '../screens/FirstAidScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -165,6 +166,7 @@ export const RootNavigator: React.FC = () => {
                 <>
                   <Stack.Screen name="Home" component={HomeScreen} />
                   <Stack.Screen name="BecomeResponder" component={BecomeResponderScreen} />
+                  <Stack.Screen name="FirstAid" component={FirstAidScreen} />
                   <Stack.Screen name="ResponderExam" component={ResponderExamScreen} />
                 </>
               )}

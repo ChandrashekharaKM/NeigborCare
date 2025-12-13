@@ -4,9 +4,9 @@ import { PrismaClient } from '@prisma/client';
 const router = Router();
 const prisma = new PrismaClient();
 
-// Helper: Haversine Formula to calculate distance in METERS
+// Helper: Haversine Formula (Meters)
 function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371e3; // Earth radius in meters
+  const R = 6371e3; 
   const φ1 = lat1 * Math.PI / 180;
   const φ2 = lat2 * Math.PI / 180;
   const Δφ = (lat2 - lat1) * Math.PI / 180;
@@ -20,14 +20,14 @@ function getDistanceInMeters(lat1: number, lon1: number, lat2: number, lon2: num
   return R * c;
 }
 
-// POST /api/emergency/create
+// 1. CREATE EMERGENCY (Increments 'Alerts Received' for Responders)
 router.post('/create', async (req: Request, res: Response) => {
   try {
     const { user_id, latitude, longitude, emergency_type, description } = req.body;
 
-    console.log(`🚨 SOS received from User ${user_id} at ${latitude}, ${longitude}`);
+    console.log(`🚨 SOS received from User ${user_id}`);
 
-    // 1. Create the Emergency Record
+    // Create Emergency Record
     const emergency = await prisma.emergency.create({
       data: {
         user_id,
@@ -39,7 +39,7 @@ router.post('/create', async (req: Request, res: Response) => {
       }
     });
 
-    // 2. Find Available Responders
+    // Find Nearby Responders
     const allResponders = await prisma.user.findMany({
       where: {
         is_responder: true,
@@ -49,30 +49,16 @@ router.post('/create', async (req: Request, res: Response) => {
       }
     });
 
-    console.log(`Found ${allResponders.length} online responders. Calculating distances...`);
-
-    // 3. Filter by Radius (500m first)
+    // Filter by Radius (2km)
     let selectedResponders = allResponders.filter(r => {
       const dist = getDistanceInMeters(latitude, longitude, r.latitude!, r.longitude!);
-      return dist <= 500;
+      return dist <= 2000;
     });
 
-    let searchRadius = 500;
+    console.log(`✅ Notifying ${selectedResponders.length} responders.`);
 
-    // 4. Fallback to 2km if no one found
-    if (selectedResponders.length === 0) {
-      console.log("⚠️ No responders in 500m. Expanding to 2km...");
-      searchRadius = 2000;
-      selectedResponders = allResponders.filter(r => {
-        const dist = getDistanceInMeters(latitude, longitude, r.latitude!, r.longitude!);
-        return dist <= 2000;
-      });
-    }
-
-    console.log(`✅ Notifying ${selectedResponders.length} responders within ${searchRadius}m`);
-
-    // 5. Create Alert Records
     if (selectedResponders.length > 0) {
+      // A. Create Alert Records
       await Promise.all(
         selectedResponders.map(r => {
           const dist = Math.round(getDistanceInMeters(latitude, longitude, r.latitude!, r.longitude!));
@@ -86,9 +72,19 @@ router.post('/create', async (req: Request, res: Response) => {
           });
         })
       );
+
+      // B. ✅ INCREMENT 'ALERTS RECEIVED' STAT FOR THESE RESPONDERS
+      // This ensures the "Alerts" count goes up in the database for everyone notified
+      await Promise.all(
+        selectedResponders.map(r => 
+            prisma.user.update({
+                where: { id: r.id },
+                data: { emergency_alerts_received: { increment: 1 } }
+            })
+        )
+      );
     }
 
-    // 6. Return Response (INCLUDING the 'emergency' object)
     res.json({ 
       success: true, 
       message: 'Emergency Created', 
@@ -102,7 +98,7 @@ router.post('/create', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/emergency/:id
+// GET EMERGENCY STATUS
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const emergency = await prisma.emergency.findUnique({
@@ -118,26 +114,30 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/emergency/:id/accept
+// 2. ACCEPT MISSION (Increments 'Successful Responses')
 router.post('/:id/accept', async (req: Request, res: Response) => {
   try {
     const { responder_id } = req.body;
     
+    // Assign Responder
     await prisma.emergency.update({
       where: { id: req.params.id },
       data: { status: 'in-progress', responder_id: responder_id }
     });
 
+    // Update Alert Statuses
     await prisma.emergencyAlert.updateMany({
       where: { emergency_id: req.params.id, responder_id: responder_id },
       data: { status: 'accepted', responded_at: new Date() }
     });
 
+    // Close other alerts
     await prisma.emergencyAlert.updateMany({
       where: { emergency_id: req.params.id, responder_id: { not: responder_id } },
       data: { status: 'declined' } 
     });
 
+    // ✅ INCREMENT 'SUCCESSFUL RESPONSES'
     await prisma.user.update({
         where: { id: responder_id },
         data: { successful_responses: { increment: 1 } }
@@ -149,7 +149,7 @@ router.post('/:id/accept', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/emergency/:id/resolve
+// 3. RESOLVE MISSION (Increments 'Lives Helped')
 router.post('/:id/resolve', async (req: Request, res: Response) => {
     try {
         const emergency = await prisma.emergency.update({
@@ -157,6 +157,7 @@ router.post('/:id/resolve', async (req: Request, res: Response) => {
             data: { status: 'resolved', resolved_at: new Date() }
         });
 
+        // ✅ INCREMENT 'LIVES HELPED'
         if (emergency.responder_id) {
             await prisma.user.update({
                 where: { id: emergency.responder_id },
@@ -170,5 +171,4 @@ router.post('/:id/resolve', async (req: Request, res: Response) => {
     }
 });
 
-// ✅ THIS IS THE MISSING LINE CAUSING YOUR ERROR
 export default router;
