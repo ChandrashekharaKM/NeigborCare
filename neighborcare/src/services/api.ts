@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 // --- CONFIGURATION ---
 const getApiBaseUrl = () => {
   // ✅ YOUR IP ADDRESS
-  const MANUAL_IP = '192.168.0.174'; 
+  const MANUAL_IP = '192.168.1.121'; 
   return `http://${MANUAL_IP}:5000`;
 };
 

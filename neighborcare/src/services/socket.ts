@@ -2,7 +2,7 @@ import io, { Socket } from 'socket.io-client';
 import { Platform } from 'react-native';
 
 // ⚠️ REPLACE WITH YOUR COMPUTER'S EXACT IP ADDRESS
-const MANUAL_IP = '192.168.0.174'; 
+const MANUAL_IP = '192.168.1.121'; 
 const SOCKET_URL = `http://${MANUAL_IP}:5000`;
 
 class WebSocketService {

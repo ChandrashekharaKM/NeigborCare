@@ -1,7 +1,7 @@
 import io, { Socket } from 'socket.io-client';
 
 // ✅ Correct IP for your current setup
-const MANUAL_IP = '192.168.0.174'; 
+const MANUAL_IP = '192.168.1.121'; 
 const SOCKET_URL = `http://${MANUAL_IP}:5000`;
 
 class WebSocketService {
